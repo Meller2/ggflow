@@ -146,7 +146,9 @@
             <p class="path-hint" title={draft.llama_dir}>{draft.llama_dir}</p>
           {/if}
           {#if draft.runtime_managed || rt?.installed}
-            <p class="hint muted">Portable: runtime лежит рядом с программой.</p>
+            <p class="hint muted">
+              Managed runtime: рядом с программой, если туда можно писать; иначе в LocalAppData.
+            </p>
           {/if}
         </div>
         <button class="btn" onclick={installEngine} disabled={installing}>

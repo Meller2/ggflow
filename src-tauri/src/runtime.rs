@@ -76,7 +76,7 @@ pub struct RuntimeStatus {
     /// Рекомендуемый backend под текущее железо.
     pub recommended_backend: String,
     pub recommended_label: String,
-    /// Portable-корень приложения (рядом с exe).
+    /// Корень данных (рядом с exe, если writable; иначе LocalAppData).
     pub app_dir: String,
     /// Дефолтная папка моделей `{app_dir}/models`.
     pub default_models_dir: String,
@@ -114,15 +114,50 @@ enum DlErr {
     Failed(String),
 }
 
-// ── Пути (portable) ──────────────────────────────────────────────────────────
+// ── Пути (portable-first, fallback в AppData) ────────────────────────────────
 
 /// Каталог, где лежит exe приложения. В dev — `target/debug`, в release — папка программы.
-pub fn app_dir() -> Result<PathBuf, String> {
+pub fn exe_dir() -> Result<PathBuf, String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("Не удалось определить путь к программе: {e}"))?;
     exe.parent()
         .map(|p| p.to_path_buf())
         .ok_or_else(|| "Некорректный путь к программе".into())
+}
+
+/// Можно ли писать в каталог (portable-проверка для Program Files и т.п.).
+fn dir_is_writable(dir: &Path) -> bool {
+    if !dir.is_dir() {
+        // Попробуем создать — если нельзя, не writable.
+        if std::fs::create_dir_all(dir).is_err() {
+            return false;
+        }
+    }
+    let probe = dir.join(".ll-write-test");
+    match std::fs::write(&probe, b"ok") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// Корень данных приложения:
+/// 1) рядом с exe, если туда можно писать (portable / dev);
+/// 2) иначе `%LOCALAPPDATA%/com.ilzat.llama-launcher` (MSI/NSIS в Program Files).
+pub fn app_dir() -> Result<PathBuf, String> {
+    let beside = exe_dir()?;
+    if dir_is_writable(&beside) {
+        return Ok(beside);
+    }
+    // Fallback: локальные данные пользователя (не требует админа).
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| "Не удалось определить LOCALAPPDATA".to_string())?;
+    let dir = base.join("com.ilzat.llama-launcher");
+    ensure_dir(&dir)?;
+    Ok(dir)
 }
 
 pub fn runtime_root() -> Result<PathBuf, String> {
@@ -486,40 +521,55 @@ fn write_meta(dir: &Path, tag: &str, backend: &RuntimeBackend) -> Result<(), Str
 }
 
 /// Найти уже установленный managed runtime (обход runtime/*/*).
+/// Смотрим и portable (рядом с exe), и fallback (LocalAppData).
 fn find_existing_install() -> Option<(PathBuf, String, String)> {
-    let root = runtime_root().ok()?;
-    if !root.is_dir() {
-        return None;
+    let mut roots = Vec::new();
+    if let Ok(r) = runtime_root() {
+        roots.push(r);
     }
-    // Предпочитаем самый свежий по mtime каталог с exe.
+    // Если app_dir ушёл в LocalAppData — всё равно проверим рядом с exe.
+    if let Ok(exe) = exe_dir() {
+        let beside = exe.join("runtime");
+        if !roots.iter().any(|r| r == &beside) {
+            roots.push(beside);
+        }
+    }
     let mut best: Option<(PathBuf, String, String, std::time::SystemTime)> = None;
-    let tags = std::fs::read_dir(&root).ok()?;
-    for tag_ent in tags.flatten() {
-        if !tag_ent.path().is_dir() {
+    for root in roots {
+        if !root.is_dir() {
             continue;
         }
-        let tag_name = tag_ent.file_name().to_string_lossy().to_string();
-        let backends = std::fs::read_dir(tag_ent.path()).ok();
-        let Some(backends) = backends else { continue };
-        for be in backends.flatten() {
-            let dir = be.path();
-            if !is_installed_at(&dir) {
+        let Ok(tags) = std::fs::read_dir(&root) else { continue };
+        for tag_ent in tags.flatten() {
+            if !tag_ent.path().is_dir() {
                 continue;
             }
-            let backend_id = if let Some((_, b)) = read_meta(&dir) {
-                b
-            } else {
-                be.file_name().to_string_lossy().to_string()
-            };
-            let mtime = dir
-                .metadata()
-                .and_then(|m| m.modified())
-                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            let cand = (dir, tag_name.clone(), backend_id, mtime);
-            best = match best {
-                Some(b) if b.3 >= cand.3 => Some(b),
-                _ => Some(cand),
-            };
+            // Пропускаем служебный .cache
+            if tag_ent.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            let tag_name = tag_ent.file_name().to_string_lossy().to_string();
+            let Ok(backends) = std::fs::read_dir(tag_ent.path()) else { continue };
+            for be in backends.flatten() {
+                let dir = be.path();
+                if !is_installed_at(&dir) {
+                    continue;
+                }
+                let backend_id = if let Some((_, b)) = read_meta(&dir) {
+                    b
+                } else {
+                    be.file_name().to_string_lossy().to_string()
+                };
+                let mtime = dir
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                let cand = (dir, tag_name.clone(), backend_id, mtime);
+                best = match best {
+                    Some(b) if b.3 >= cand.3 => Some(b),
+                    _ => Some(cand),
+                };
+            }
         }
     }
     best.map(|(p, t, b, _)| (p, t, b))
