@@ -8,6 +8,8 @@ mod hf;
 mod models;
 mod server;
 
+use tauri::Manager;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -15,6 +17,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(server::ServerState::default())
         .manage(hf::DownloadState::default())
+        // При закрытии окна убиваем запущенный llama-server, чтобы он не остался
+        // осиротевшим процессом, держащим порт и VRAM.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                let state = window.state::<server::ServerState>();
+                server::shutdown(&state);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             config::load_settings,
             config::save_settings,

@@ -90,6 +90,65 @@ fn detect_ram() -> u64 {
     }
 }
 
+// ── Не-Windows: фолбэки без нативных API ─────────────────────────────────────
+
+/// GPU через `nvidia-smi` (если установлен): суммарная видеопамять первой карты.
+/// AMD/Intel/Apple на этих платформах пока не покрываем — вернём None (→ CPU-режим).
+#[cfg(not(windows))]
+fn detect_gpu() -> Option<GpuInfo> {
+    use std::process::Command;
+    let out = Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=name,memory.total",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    // Первая строка: "NVIDIA GeForce RTX 4090, 24564" (имя, МиБ).
+    let line = String::from_utf8_lossy(&out.stdout);
+    let first = line.lines().next()?;
+    let (name, mib) = first.split_once(',')?;
+    let mib: u64 = mib.trim().parse().ok()?;
+    Some(GpuInfo {
+        name: name.trim().to_string(),
+        vram_bytes: mib * 1024 * 1024,
+    })
+}
+
+/// RAM: Linux — /proc/meminfo (MemTotal, кБ); macOS — sysctl hw.memsize (байты).
+#[cfg(not(windows))]
+fn detect_ram() -> u64 {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(text) = std::fs::read_to_string("/proc/meminfo") {
+            for line in text.lines() {
+                if let Some(rest) = line.strip_prefix("MemTotal:") {
+                    if let Some(kb) = rest.split_whitespace().next() {
+                        if let Ok(kb) = kb.parse::<u64>() {
+                            return kb * 1024;
+                        }
+                    }
+                }
+            }
+        }
+        0
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        use std::process::Command;
+        Command::new("sysctl")
+            .args(["-n", "hw.memsize"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u64>().ok())
+            .unwrap_or(0)
+    }
+}
+
 // ── CPU ──────────────────────────────────────────────────────────────────────
 
 /// (логические, оценка физических). Физические оцениваем как logical/2 (SMT).
@@ -107,23 +166,10 @@ fn detect_cores() -> (u32, u32) {
 #[tauri::command]
 pub fn detect_hardware() -> HardwareInfo {
     let (logical_cores, physical_cores) = detect_cores();
-
-    #[cfg(windows)]
-    {
-        HardwareInfo {
-            gpu: detect_gpu(),
-            total_ram_bytes: detect_ram(),
-            logical_cores,
-            physical_cores,
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        HardwareInfo {
-            gpu: None,
-            total_ram_bytes: 0,
-            logical_cores,
-            physical_cores,
-        }
+    HardwareInfo {
+        gpu: detect_gpu(),
+        total_ram_bytes: detect_ram(),
+        logical_cores,
+        physical_cores,
     }
 }

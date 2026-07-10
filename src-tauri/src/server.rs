@@ -3,11 +3,16 @@
 
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
+use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
+
+/// Сколько ждать готовности сервера, прежде чем сообщить UI об ошибке.
+const READY_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// Конфиг запуска, приходит из UI.
 #[derive(Debug, Clone, Deserialize)]
@@ -39,6 +44,14 @@ pub struct ServerStatus {
 pub struct ServerState {
     inner: Mutex<Option<RunningServer>>,
     next_id: AtomicU64,
+}
+
+impl ServerState {
+    /// Взять lock, устойчиво к «отравлению» (паника другого потока не должна
+    /// класть всё приложение — восстанавливаем внутреннее значение).
+    fn lock(&self) -> MutexGuard<'_, Option<RunningServer>> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
 }
 
 struct RunningServer {
@@ -104,8 +117,46 @@ fn port_available(port: u16) -> bool {
     std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
 }
 
+/// Убить процесс (и всё его дерево на Windows). Используется и при стопе, и при
+/// закрытии приложения, поэтому вынесено отдельно.
+fn kill_pid(pid: u32) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = Command::new("kill").arg(pid.to_string()).output();
+    }
+}
+
+/// Убить сервер, если он ещё запущен. Вызывается при закрытии окна приложения,
+/// чтобы llama-server.exe не остался осиротевшим и не держал порт/VRAM.
+pub fn shutdown(state: &ServerState) {
+    if let Some(s) = state.lock().take() {
+        kill_pid(s.pid);
+    }
+}
+
+/// Помечает готовность: взводит флаг и шлёт `server-ready` ровно один раз.
+fn mark_ready(app: &AppHandle, ready: &AtomicBool, port: u16) {
+    // swap → true возвращает прежнее значение; шлём событие только на первом переходе.
+    if !ready.swap(true, Ordering::SeqCst) {
+        let _ = app.emit("server-ready", port);
+    }
+}
+
 /// Читать поток построчно и слать события `server-log`. Детектить готовность.
-fn stream_reader<R: std::io::Read + Send + 'static>(app: AppHandle, reader: R, port: u16) {
+fn stream_reader<R: std::io::Read + Send + 'static>(
+    app: AppHandle,
+    reader: R,
+    port: u16,
+    ready: Arc<AtomicBool>,
+) {
     std::thread::spawn(move || {
         let buf = BufReader::new(reader);
         for line in buf.lines() {
@@ -116,9 +167,45 @@ fn stream_reader<R: std::io::Read + Send + 'static>(app: AppHandle, reader: R, p
             // Готовность: llama-server печатает "... listening on http://127.0.0.1:PORT".
             let lower = line.to_lowercase();
             if lower.contains("listening") && lower.contains(&port.to_string()) {
-                let _ = app.emit("server-ready", port);
+                mark_ready(&app, &ready, port);
             }
             let _ = app.emit("server-log", line);
+        }
+    });
+}
+
+/// Страховочный сторож готовности: если по логу готовность так и не поймали,
+/// периодически пробуем открыть TCP-соединение к порту. Если за READY_TIMEOUT
+/// сервер не поднялся и процесс всё ещё «наш» — сообщаем UI об ошибке.
+fn spawn_ready_watchdog(app: AppHandle, port: u16, id: u64, ready: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        let deadline = Instant::now() + READY_TIMEOUT;
+        while Instant::now() < deadline {
+            if ready.load(Ordering::SeqCst) {
+                return; // уже готов (лог поймал раньше)
+            }
+            // Активная проверка: порт принимает соединения → сервер слушает.
+            let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+            if TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok() {
+                mark_ready(&app, &ready, port);
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        // Дедлайн вышел, готовности нет. Сообщаем только если это всё ещё наше поколение.
+        if ready.load(Ordering::SeqCst) {
+            return;
+        }
+        let st = app.state::<ServerState>();
+        let is_current = st.lock().as_ref().map(|s| s.id == id).unwrap_or(false);
+        if is_current {
+            let _ = app.emit(
+                "server-timeout",
+                format!(
+                    "Сервер не запустился за {} с. Возможно, не хватает памяти или модель не загрузилась — смотрите лог.",
+                    READY_TIMEOUT.as_secs()
+                ),
+            );
         }
     });
 }
@@ -131,12 +218,14 @@ pub fn start_server(
     state: State<ServerState>,
     config: LaunchConfig,
 ) -> Result<ServerStatus, String> {
-    let mut guard = state.inner.lock().unwrap();
+    let mut guard = state.lock();
     if guard.is_some() {
         return Err("Сервер уже запущен. Сначала остановите его.".into());
     }
 
-    // Валидация путей и порта.
+    // Валидация путей и порта (раннее обнаружение проблем).
+    // Примечание: проверка порта → spawn = TOCTOU; если между проверкой и bind
+    // кто-то займёт порт, llama-server упадёт сам с понятной ошибкой в логе.
     let exe = Path::new(&config.llama_dir).join("llama-server.exe");
     if !exe.is_file() {
         return Err(format!("llama-server.exe не найден в {}", config.llama_dir));
@@ -177,14 +266,18 @@ pub fn start_server(
 
     let pid = child.id();
     let id = state.next_id.fetch_add(1, Ordering::SeqCst);
+    let ready = Arc::new(AtomicBool::new(false));
 
     // Стримим оба потока (забираем пайпы у child).
     if let Some(out) = child.stdout.take() {
-        stream_reader(app.clone(), out, config.port);
+        stream_reader(app.clone(), out, config.port, ready.clone());
     }
     if let Some(err) = child.stderr.take() {
-        stream_reader(app.clone(), err, config.port);
+        stream_reader(app.clone(), err, config.port, ready.clone());
     }
+
+    // Сторож готовности: таймаут + активная TCP-проверка, если лог не поймал «listening».
+    spawn_ready_watchdog(app.clone(), config.port, id, ready.clone());
 
     // Поток-наблюдатель владеет Child и ждёт его завершения (в т.ч. самопадение/краш).
     {
@@ -193,7 +286,7 @@ pub fn start_server(
             let code = child.wait().ok().and_then(|s| s.code()).unwrap_or(-1);
             // Снять состояние, только если это всё ещё наше поколение.
             let st = app_mon.state::<ServerState>();
-            let mut g = st.inner.lock().unwrap();
+            let mut g = st.lock();
             let is_current = g.as_ref().map(|s| s.id == id).unwrap_or(false);
             if is_current {
                 *g = None;
@@ -220,30 +313,15 @@ pub fn start_server(
 #[tauri::command]
 pub fn stop_server(app: AppHandle, state: State<ServerState>) -> Result<(), String> {
     let server = {
-        let mut guard = state.inner.lock().unwrap();
+        let mut guard = state.lock();
         match guard.take() {
             Some(s) => s,
             None => return Ok(()), // уже остановлен
         }
     };
 
-    // Windows: убиваем всё дерево (llama-server может иметь дочерние процессы).
-    // Наблюдатель, увидев смерть процесса, эмитит server-exit.
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        Command::new("taskkill")
-            .args(["/F", "/T", "/PID", &server.pid.to_string()])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .map_err(|e| format!("Не удалось остановить процесс: {e}"))?;
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = Command::new("kill")
-            .arg(server.pid.to_string())
-            .output();
-    }
+    // Убиваем всё дерево процессов. Наблюдатель, увидев смерть процесса, эмитит server-exit.
+    kill_pid(server.pid);
 
     let _ = app.emit("server-log", "— Остановка сервера —".to_string());
     Ok(())
@@ -251,7 +329,7 @@ pub fn stop_server(app: AppHandle, state: State<ServerState>) -> Result<(), Stri
 
 #[tauri::command]
 pub fn server_status(state: State<ServerState>) -> ServerStatus {
-    let guard = state.inner.lock().unwrap();
+    let guard = state.lock();
     match guard.as_ref() {
         Some(s) => ServerStatus {
             running: true,

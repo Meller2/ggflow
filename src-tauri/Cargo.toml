@@ -28,6 +28,9 @@ serde_json = "1"
 # default-tls на Windows = schannel (без OpenSSL); json — для разбора API-ответов.
 reqwest = { version = "0.12", features = ["json"] }
 
+# Асинхронная запись файла при скачивании (не блокируем исполнитель Tokio).
+tokio = { version = "1", features = ["fs", "io-util"] }
+
 # Детект железа (Фаза 3): VRAM через DXGI, RAM через GlobalMemoryStatusEx.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

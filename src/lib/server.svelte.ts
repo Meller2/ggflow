@@ -44,6 +44,13 @@ class ServerStore {
       }),
     );
     this.#unlisten.push(
+      await listen<string>("server-timeout", (e) => {
+        // Сервер не поднялся за отведённое время — показываем ошибку, но процесс
+        // мог остаться живым (висит на загрузке модели), пусть пользователь решает.
+        if (!this.ready) this.error = e.payload;
+      }),
+    );
+    this.#unlisten.push(
       await listen<number>("server-exit", (e) => {
         const wasManualStop = this.stopping;
         this.running = false;

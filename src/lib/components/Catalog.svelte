@@ -19,6 +19,10 @@
   let searching = $state(false);
   let searchError = $state<string | null>(null);
   let searched = $state(false);
+  // Текущий лимит выдачи; «показать ещё» увеличивает его и перезапрашивает.
+  const PAGE = 40;
+  let limit = $state(PAGE);
+  let loadingMore = $state(false);
 
   // Раскрытый репозиторий + кэш его файлов.
   let expanded = $state<string | null>(null);
@@ -60,13 +64,33 @@
     searchError = null;
     searched = true;
     expanded = null;
+    limit = PAGE; // новый поиск — сбрасываем лимит
     try {
-      results = await hfSearch(q);
+      results = await hfSearch(q, limit);
     } catch (e) {
       searchError = String(e);
       results = [];
     } finally {
       searching = false;
+    }
+  }
+
+  // «Показать ещё»: увеличиваем лимит и перезапрашиваем (HF search без offset,
+  // поэтому берём тот же запрос с бо́льшим лимитом). Больше 100 HF не отдаёт.
+  const canLoadMore = $derived(
+    searched && !searching && results.length >= limit && limit < 100,
+  );
+  async function loadMore() {
+    if (loadingMore || !canLoadMore) return;
+    loadingMore = true;
+    searchError = null;
+    limit = Math.min(100, limit + PAGE);
+    try {
+      results = await hfSearch(query.trim(), limit);
+    } catch (e) {
+      searchError = String(e);
+    } finally {
+      loadingMore = false;
     }
   }
 
@@ -222,6 +246,13 @@
           </div>
         {/each}
       </div>
+      {#if canLoadMore}
+        <div class="more">
+          <button class="btn" onclick={loadMore} disabled={loadingMore}>
+            {loadingMore ? "Загружаю…" : "Показать ещё"}
+          </button>
+        </div>
+      {/if}
     {/if}
   </div>
 
@@ -258,6 +289,7 @@
 
   .scroll { flex: 1; min-height: 0; overflow-y: auto; padding-right: 6px; }
   .list { display: flex; flex-direction: column; gap: 8px; }
+  .more { display: flex; justify-content: center; padding: 14px 0 4px; }
 
   .repo {
     border: 1px solid var(--border);

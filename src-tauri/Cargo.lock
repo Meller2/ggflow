@@ -2006,6 +2006,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
+ "tokio",
  "windows 0.58.0",
 ]
 

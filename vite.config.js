@@ -16,7 +16,9 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    // Биндимся явно на IPv4-loopback: иначе Vite слушает только [::1] (IPv6),
+    // а Tauri стучится на localhost→127.0.0.1 и падает с таймаутом подключения.
+    host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",

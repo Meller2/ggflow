@@ -7,7 +7,11 @@ use tauri::{AppHandle, Manager};
 
 /// Дефолты запуска модели (маппинг флагов из llama.bat).
 /// Пользователь может переопределить в UI; auto_config переопределит под железо.
+///
+/// Все поля с `#[serde(default)]`: если старый settings.json не содержит поля,
+/// подставится дефолт этого поля, а не потеряется весь конфиг.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LaunchDefaults {
     /// Контекст в токенах.
     pub ctx: u32,
@@ -38,6 +42,7 @@ impl Default for LaunchDefaults {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     /// Папка с llama-server.exe (выбирается при онбординге).
     pub llama_dir: Option<String>,

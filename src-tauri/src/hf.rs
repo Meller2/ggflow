@@ -7,11 +7,12 @@
 //!   файл    GET /{repo}/resolve/main/{path}   (LFS-редирект reqwest проходит сам)
 
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, State};
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 
 const HF: &str = "https://huggingface.co";
 const UA: &str = concat!("LlamaLauncher/", env!("CARGO_PKG_VERSION"));
@@ -86,6 +87,13 @@ pub struct DownloadState {
     active: Mutex<Option<String>>,
 }
 
+impl DownloadState {
+    /// Poison-устойчивый lock (паника чужого потока не должна класть загрузки).
+    fn active(&self) -> std::sync::MutexGuard<'_, Option<String>> {
+        self.active.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
 /// Внутренняя ошибка скачивания: отмена vs реальный сбой.
 enum DlErr {
     Canceled,
@@ -118,14 +126,17 @@ fn urlencode(s: &str) -> String {
 // ── Tauri-команды ─────────────────────────────────────────────────────────────
 
 /// Поиск GGUF-репозиториев по подстроке, отсортированных по числу загрузок.
+/// `limit` (None → 40) даёт фронту «показать ещё»: перезапрос с бо́льшим лимитом.
 #[tauri::command]
-pub async fn hf_search(query: String) -> Result<Vec<HfModel>, String> {
+pub async fn hf_search(query: String, limit: Option<u32>) -> Result<Vec<HfModel>, String> {
     let q = query.trim();
     if q.is_empty() {
         return Ok(Vec::new());
     }
+    // HF отдаёт максимум ~100 за запрос; ограничим разумным диапазоном.
+    let limit = limit.unwrap_or(40).clamp(1, 100);
     let url = format!(
-        "{HF}/api/models?search={}&filter=gguf&sort=downloads&direction=-1&limit=40",
+        "{HF}/api/models?search={}&filter=gguf&sort=downloads&direction=-1&limit={limit}",
         urlencode(q)
     );
     let resp = client()?
@@ -212,9 +223,16 @@ pub async fn hf_download(
     }
     let part_path = dir.join(format!("{filename}.part"));
 
+    // Докачка: если .part уже есть, продолжим с его размера (HTTP Range).
+    // 0 = качаем с нуля.
+    let resume_from = tokio::fs::metadata(&part_path)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
+
     // Занять единственный слот загрузки.
     {
-        let mut active = state.active.lock().unwrap();
+        let mut active = state.active();
         if active.is_some() {
             return Err("Уже идёт другая загрузка — дождитесь её завершения.".into());
         }
@@ -223,10 +241,10 @@ pub async fn hf_download(
     state.cancel.store(false, Ordering::SeqCst);
 
     let url = format!("{HF}/{repo}/resolve/main/{file}");
-    let result = stream_to_file(&app, &state, &url, &part_path, &filename).await;
+    let result = stream_to_file(&app, &state, &url, &part_path, &filename, resume_from).await;
 
     // Освободить слот в любом исходе.
-    *state.active.lock().unwrap() = None;
+    *state.active() = None;
 
     match result {
         Ok(total) => {
@@ -236,12 +254,12 @@ pub async fn hf_download(
             Ok(final_path.to_string_lossy().to_string())
         }
         Err(DlErr::Canceled) => {
-            let _ = std::fs::remove_file(&part_path);
+            // .part НЕ удаляем — оставляем для последующей докачки.
             emit(&app, &filename, 0, 0, false, None, true);
             Err("Загрузка отменена.".into())
         }
         Err(DlErr::Failed(msg)) => {
-            let _ = std::fs::remove_file(&part_path);
+            // .part НЕ удаляем — при сетевом сбое даём шанс докачать позже.
             emit(&app, &filename, 0, 0, false, Some(msg.clone()), false);
             Err(msg)
         }
@@ -280,6 +298,7 @@ fn emit(
 }
 
 /// Качает `url` в `part_path` кусками, эмитит прогресс, проверяет флаг отмены.
+/// При `resume_from > 0` продолжает существующий `.part` через HTTP Range.
 /// Возвращает итоговый размер при успехе.
 async fn stream_to_file(
     app: &AppHandle,
@@ -287,31 +306,52 @@ async fn stream_to_file(
     url: &str,
     part_path: &Path,
     filename: &str,
+    resume_from: u64,
 ) -> Result<u64, DlErr> {
-    let mut resp = client()
-        .map_err(DlErr::Failed)?
-        .get(url)
+    let mut req = client().map_err(DlErr::Failed)?.get(url);
+    if resume_from > 0 {
+        // Просим сервер отдать хвост файла начиная с уже скачанного смещения.
+        req = req.header("Range", format!("bytes={resume_from}-"));
+    }
+    let mut resp = req
         .send()
         .await
         .map_err(|e| DlErr::Failed(format!("Сеть недоступна: {e}")))?;
-    if !resp.status().is_success() {
+
+    // 206 Partial Content → докачка принята. 200 → сервер отдаёт файл целиком
+    // (Range проигнорирован), поэтому начинаем с нуля и перезаписываем .part.
+    let status = resp.status();
+    let resuming = status == reqwest::StatusCode::PARTIAL_CONTENT && resume_from > 0;
+    if !status.is_success() {
         return Err(DlErr::Failed(format!(
-            "Hugging Face вернул {} при скачивании",
-            resp.status()
+            "Hugging Face вернул {status} при скачивании"
         )));
     }
 
-    let total = resp.content_length().unwrap_or(0);
-    let mut out = std::fs::File::create(part_path)
-        .map_err(|e| DlErr::Failed(format!("Не удалось создать файл: {e}")))?;
+    let already: u64 = if resuming { resume_from } else { 0 };
+    // content_length — это длина ТЕЛА ответа; при докачке прибавляем уже скачанное.
+    let body_len = resp.content_length().unwrap_or(0);
+    let total = if body_len > 0 { already + body_len } else { 0 };
 
-    let mut downloaded: u64 = 0;
-    let mut last_emit: u64 = 0;
-    // Начальное событие (0 %), чтобы UI сразу показал полосу.
-    emit(app, filename, 0, total, false, None, false);
+    // Открываем .part на дозапись (докачка) или создаём заново (с нуля).
+    let mut out = if resuming {
+        tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(part_path)
+            .await
+    } else {
+        File::create(part_path).await
+    }
+    .map_err(|e| DlErr::Failed(format!("Не удалось открыть файл: {e}")))?;
+
+    let mut downloaded = already;
+    let mut last_emit = already;
+    // Начальное событие, чтобы UI сразу показал полосу (и точку старта при докачке).
+    emit(app, filename, downloaded, total, false, None, false);
 
     loop {
         if state.cancel.load(Ordering::SeqCst) {
+            let _ = out.flush().await;
             return Err(DlErr::Canceled);
         }
         let chunk = resp
@@ -323,6 +363,7 @@ async fn stream_to_file(
             None => break, // конец потока
         };
         out.write_all(&chunk)
+            .await
             .map_err(|e| DlErr::Failed(format!("Ошибка записи на диск: {e}")))?;
         downloaded += chunk.len() as u64;
 
@@ -332,6 +373,17 @@ async fn stream_to_file(
         }
     }
 
-    out.flush().ok();
+    out.flush()
+        .await
+        .map_err(|e| DlErr::Failed(format!("Ошибка сброса на диск: {e}")))?;
+
+    // Проверка целостности: если сервер сообщил размер — он должен совпасть.
+    // Иначе оборванный поток с кодом 200 молча сохранился бы как «валидный» файл.
+    if total > 0 && downloaded != total {
+        return Err(DlErr::Failed(format!(
+            "Файл скачан не полностью: {downloaded} из {total} байт. Попробуйте докачать."
+        )));
+    }
+
     Ok(if total > 0 { total } else { downloaded })
 }

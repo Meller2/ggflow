@@ -135,9 +135,9 @@ export const autoConfig = (modelPath: string): Promise<AutoConfig> =>
 
 // ── Hugging Face ──────────────────────────────────────────────────────────────
 
-/** Поиск GGUF-репозиториев по подстроке (сортировка по загрузкам). */
-export const hfSearch = (query: string): Promise<HfModel[]> =>
-  invoke("hf_search", { query });
+/** Поиск GGUF-репозиториев по подстроке (сортировка по загрузкам). limit по умолчанию 40. */
+export const hfSearch = (query: string, limit?: number): Promise<HfModel[]> =>
+  invoke("hf_search", { query, limit });
 
 /** Список .gguf-файлов репозитория с размерами. */
 export const hfListFiles = (repo: string): Promise<HfFile[]> =>
