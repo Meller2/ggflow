@@ -11,6 +11,7 @@
     type HfFile,
     type DownloadProgress,
   } from "$lib/api";
+  import { prefs } from "$lib/prefs.svelte";
 
   let { settings }: { settings: Settings } = $props();
 
@@ -44,12 +45,12 @@
       const p = e.payload;
       if (p.done) {
         dl = null;
-        dlDoneMsg = `«${p.file}» скачан в папку моделей. Найдёшь его во вкладке «Модели».`;
+        dlDoneMsg = prefs.t("cat.done", { file: p.file });
       } else if (p.canceled) {
         dl = null;
       } else if (p.error) {
         dl = null;
-        searchError = `Ошибка загрузки: ${p.error}`;
+        searchError = prefs.t("cat.err_dl", { err: p.error });
       } else {
         dl = p;
       }
@@ -118,7 +119,7 @@
 
   async function download(repo: string, file: HfFile) {
     if (!destDir) {
-      searchError = "Не задана папка для моделей — укажи её в Настройках.";
+      searchError = prefs.t("cat.err_folder");
       return;
     }
     dlDoneMsg = null;
@@ -160,12 +161,14 @@
 <div class="page">
   <header class="head">
     <div>
-      <h2>Каталог Hugging Face</h2>
-      <p class="sub">Поиск и загрузка GGUF-моделей</p>
+      <h2>{prefs.t("cat.title")}</h2>
+      <p class="sub">
+        {prefs.isBeginner ? prefs.t("cat.sub_beginner") : prefs.t("cat.sub")}
+      </p>
     </div>
-    {#if settings.model_folders.length > 1}
+    {#if settings.model_folders.length > 1 && prefs.showPowerPaths}
       <label class="dest">
-        <span>Скачивать в</span>
+        <span>{prefs.t("cat.dest")}</span>
         <select class="input sel" bind:value={destDir}>
           {#each settings.model_folders as f}
             <option value={f}>{f}</option>
@@ -178,12 +181,12 @@
   <div class="searchbar">
     <input
       class="input"
-      placeholder="Например: qwen3 gguf, llama 3 8b…"
+      placeholder={prefs.t("cat.ph")}
       bind:value={query}
       onkeydown={onKey}
     />
     <button class="btn btn-primary" onclick={runSearch} disabled={searching || !query.trim()}>
-      {searching ? "Ищу…" : "⌕ Найти"}
+      {searching ? prefs.t("cat.searching") : `⌕ ${prefs.t("cat.find")}`}
     </button>
   </div>
 
@@ -196,14 +199,14 @@
 
   <div class="scroll">
     {#if searching}
-      <div class="muted center">Ищу на Hugging Face…</div>
+      <div class="muted center">{prefs.t("cat.searching_long")}</div>
     {:else if searched && results.length === 0 && !searchError}
-      <div class="muted center">Ничего не найдено по «{query}».</div>
+      <div class="muted center">{prefs.t("cat.none", { q: query })}</div>
     {:else if !searched}
       <div class="hint center">
         <div class="hint-orb"></div>
-        <p>Введи запрос, чтобы найти модели в формате GGUF.</p>
-        <p class="dim">Скачанные файлы попадут в твою папку моделей и появятся во вкладке «Модели».</p>
+        <p>{prefs.isBeginner ? prefs.t("cat.hint") : prefs.t("cat.hint_pro")}</p>
+        <p class="dim">{prefs.t("cat.hint_dim")}</p>
       </div>
     {:else}
       <div class="list">
@@ -212,8 +215,8 @@
             <button class="repo-head" onclick={() => toggle(m.id)}>
               <span class="repo-id" title={m.id}>{m.id}</span>
               <span class="repo-stats">
-                <span title="Загрузок">↓ {fmtCount(m.downloads)}</span>
-                <span title="Лайков">♥ {fmtCount(m.likes)}</span>
+                <span>↓ {fmtCount(m.downloads)}</span>
+                <span>♥ {fmtCount(m.likes)}</span>
                 <span class="chev">{expanded === m.id ? "▲" : "▼"}</span>
               </span>
             </button>
@@ -221,7 +224,7 @@
             {#if expanded === m.id}
               <div class="files">
                 {#if filesLoading === m.id}
-                  <div class="muted small pad">Читаю список файлов…</div>
+                  <div class="muted small pad">{prefs.t("cat.files_loading")}</div>
                 {:else if filesError}
                   <div class="bad small pad">{filesError}</div>
                 {:else if files[m.id]?.length}
@@ -234,12 +237,12 @@
                         disabled={busy || !destDir}
                         onclick={() => download(m.id, f)}
                       >
-                        ↓ Скачать
+                        ↓ {prefs.t("cat.dl")}
                       </button>
                     </div>
                   {/each}
                 {:else}
-                  <div class="muted small pad">В этом репозитории нет .gguf-файлов.</div>
+                  <div class="muted small pad">{prefs.t("cat.no_gguf")}</div>
                 {/if}
               </div>
             {/if}
@@ -249,7 +252,7 @@
       {#if canLoadMore}
         <div class="more">
           <button class="btn" onclick={loadMore} disabled={loadingMore}>
-            {loadingMore ? "Загружаю…" : "Показать ещё"}
+            {loadingMore ? prefs.t("cat.loading_more") : prefs.t("cat.more")}
           </button>
         </div>
       {/if}
@@ -267,7 +270,7 @@
             {formatBytes(dl.downloaded)}
           {/if}
         </span>
-        <button class="btn dl-cancel" onclick={cancel}>Отмена</button>
+        <button class="btn dl-cancel" onclick={cancel}>{prefs.t("cat.cancel")}</button>
       </div>
       <div class="bar">
         <div class="bar-fill {dl.total > 0 ? '' : 'indet'}" style="width:{dl.total > 0 ? pct : 100}%"></div>

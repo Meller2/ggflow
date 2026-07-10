@@ -13,6 +13,7 @@
     type AutoConfig,
   } from "$lib/api";
   import { serverState } from "$lib/server.svelte";
+  import { prefs } from "$lib/prefs.svelte";
 
   let { settings, onlaunch }: {
     settings: Settings;
@@ -30,7 +31,11 @@
   let hw = $state<HardwareInfo | null>(null);
   let auto = $state<AutoConfig | null>(null);
   let autoLoading = $state(false);
+  // Новичок всегда на авто; остальные могут выключить.
   let useAuto = $state(true);
+  $effect(() => {
+    if (!prefs.canDisableAuto) useAuto = true;
+  });
 
   async function loadHardware() {
     try {
@@ -84,19 +89,18 @@
 
   async function launch(m: ModelInfo) {
     if (!settings.llama_dir) return;
-    // Авто-режим (если посчитался) переопределяет ngl/ctx/kv/threads под железо;
-    // иначе — ручные дефолты из настроек.
+    const autoOn = !prefs.canDisableAuto || useAuto;
     const cfg: LaunchConfig = {
       llama_dir: settings.llama_dir,
       model_path: m.path,
-      ctx: useAuto && auto ? auto.ctx : settings.defaults.ctx,
-      kv_quant: useAuto && auto ? auto.kv_quant : settings.defaults.kv_quant,
-      threads: useAuto && auto ? auto.threads : settings.defaults.threads,
-      ngl: useAuto && auto ? auto.ngl : settings.defaults.ngl,
+      ctx: autoOn && auto ? auto.ctx : settings.defaults.ctx,
+      kv_quant: autoOn && auto ? auto.kv_quant : settings.defaults.kv_quant,
+      threads: autoOn && auto ? auto.threads : settings.defaults.threads,
+      ngl: autoOn && auto ? auto.ngl : settings.defaults.ngl,
       port: settings.defaults.port,
       tools: settings.defaults.tools,
     };
-    onlaunch(); // переключить на таб «Запущено»
+    onlaunch();
     await serverState.start(cfg);
   }
 
@@ -110,18 +114,22 @@
 <div class="page">
   <header class="head">
     <div>
-      <h2>Локальные модели</h2>
+      <h2>{prefs.t("models.title")}</h2>
       <p class="sub">
-        {#if loading}Сканирую…{:else}{models.length} моделей найдено{/if}
+        {#if loading}
+          {prefs.t("models.scanning")}
+        {:else}
+          {prefs.t("models.count", { n: models.length })}
+        {/if}
       </p>
     </div>
     <div class="head-actions">
-      <input class="input search" placeholder="Поиск…" bind:value={query} />
-      <button class="btn" onclick={refresh} disabled={loading}>⟳ Обновить</button>
+      <input class="input search" placeholder={prefs.t("models.search")} bind:value={query} />
+      <button class="btn" onclick={refresh} disabled={loading}>⟳ {prefs.t("models.refresh")}</button>
     </div>
   </header>
 
-  {#if hw}
+  {#if hw && !prefs.isBeginner}
     <div class="hwbar">
       {#if hw.gpu}
         <span class="hw-item">
@@ -129,25 +137,30 @@
           {hw.gpu.name} · {formatBytes(hw.gpu.vram_bytes)}
         </span>
       {:else}
-        <span class="hw-item hw-warn"><span class="hw-k">GPU</span> не обнаружена</span>
+        <span class="hw-item hw-warn"><span class="hw-k">GPU</span> {prefs.t("models.gpu_none")}</span>
       {/if}
       <span class="hw-item"><span class="hw-k">RAM</span> {formatBytes(hw.total_ram_bytes)}</span>
-      <span class="hw-item"><span class="hw-k">CPU</span> {hw.physical_cores} ядер / {hw.logical_cores} потоков</span>
+      <span class="hw-item">
+        <span class="hw-k">CPU</span>
+        {prefs.t("models.cpu", { phys: hw.physical_cores, log: hw.logical_cores })}
+      </span>
     </div>
   {/if}
 
   {#if error}
     <div class="glass note bad">
-      Не удалось просканировать папки: {error}
+      {prefs.t("models.scan_err", { err: error })}
     </div>
   {:else if loading}
-    <div class="muted center">Загрузка…</div>
+    <div class="muted center">{prefs.t("models.scanning")}</div>
   {:else if models.length === 0}
     <div class="glass empty">
       <div class="empty-orb"></div>
-      <h3>Моделей пока нет</h3>
-      <p>В указанных папках не найдено ни одного .gguf файла.</p>
-      <p class="dim">Проверь папки в Настройках или скачай модель в Каталоге.</p>
+      <h3>{prefs.t("models.empty.title")}</h3>
+      <p>{prefs.t("models.empty.body")}</p>
+      <p class="dim">
+        {prefs.isBeginner ? prefs.t("models.empty.hint") : prefs.t("models.empty.hint_pro")}
+      </p>
     </div>
   {:else}
     <div class="layout">
@@ -164,7 +177,7 @@
           </button>
         {/each}
         {#if filtered.length === 0}
-          <div class="muted center small">Ничего не найдено по «{query}»</div>
+          <div class="muted center small">{prefs.t("models.none_query", { q: query })}</div>
         {/if}
       </div>
 
@@ -173,63 +186,81 @@
           <h3 class="d-name">{selectedModel.name}</h3>
           <div class="d-size">{formatBytes(selectedModel.size)}</div>
 
-          <div class="meta">
-            {#if metaLoading}
-              <span class="muted">Читаю метаданные…</span>
-            {:else if meta}
-              <div class="meta-grid">
-                {#if meta.architecture}
-                  <span class="k">Архитектура</span><span class="v">{meta.architecture}</span>
-                {/if}
-                {#if meta.n_layers}
-                  <span class="k">Слоёв</span><span class="v">{meta.n_layers}</span>
-                {/if}
-                {#if meta.n_head}
-                  <span class="k">Attn heads</span><span class="v">{meta.n_head}</span>
-                {/if}
-                {#if meta.n_head_kv}
-                  <span class="k">KV heads</span><span class="v">{meta.n_head_kv}</span>
-                {/if}
-                {#if meta.n_embd}
-                  <span class="k">Embedding</span><span class="v">{meta.n_embd}</span>
-                {/if}
-                {#if meta.ctx_train}
-                  <span class="k">Контекст (train)</span><span class="v">{meta.ctx_train.toLocaleString()}</span>
-                {/if}
-              </div>
-            {:else}
-              <span class="muted">Метаданные недоступны</span>
-            {/if}
-          </div>
+          {#if prefs.showAdvanced}
+            <div class="meta">
+              {#if metaLoading}
+                <span class="muted">{prefs.t("models.meta.loading")}</span>
+              {:else if meta}
+                <div class="meta-grid">
+                  {#if meta.architecture}
+                    <span class="k">{prefs.t("models.meta.arch")}</span><span class="v">{meta.architecture}</span>
+                  {/if}
+                  {#if meta.n_layers}
+                    <span class="k">{prefs.t("models.meta.layers")}</span><span class="v">{meta.n_layers}</span>
+                  {/if}
+                  {#if meta.n_head}
+                    <span class="k">{prefs.t("models.meta.heads")}</span><span class="v">{meta.n_head}</span>
+                  {/if}
+                  {#if meta.n_head_kv}
+                    <span class="k">{prefs.t("models.meta.kv")}</span><span class="v">{meta.n_head_kv}</span>
+                  {/if}
+                  {#if meta.n_embd}
+                    <span class="k">{prefs.t("models.meta.embd")}</span><span class="v">{meta.n_embd}</span>
+                  {/if}
+                  {#if meta.ctx_train}
+                    <span class="k">{prefs.t("models.meta.ctx")}</span><span class="v">{meta.ctx_train.toLocaleString()}</span>
+                  {/if}
+                </div>
+              {:else}
+                <span class="muted">{prefs.t("models.meta.none")}</span>
+              {/if}
+            </div>
+          {:else if prefs.isIntermediate && meta?.architecture}
+            <div class="meta soft">
+              <span class="muted">{meta.architecture}{#if meta.n_layers} · {meta.n_layers} {prefs.t("models.meta.layers").toLowerCase()}{/if}</span>
+            </div>
+          {/if}
 
           <div class="reco">
             <div class="reco-top">
-              <span class="reco-title">Авто-настройка</span>
-              <label class="toggle">
-                <input type="checkbox" bind:checked={useAuto} />
-                <span>Авто</span>
-              </label>
+              <span class="reco-title">{prefs.t("models.auto")}</span>
+              {#if prefs.canDisableAuto}
+                <label class="toggle">
+                  <input type="checkbox" bind:checked={useAuto} />
+                  <span>{prefs.t("models.auto.on")}</span>
+                </label>
+              {/if}
             </div>
             {#if autoLoading}
-              <span class="muted small">Подбираю параметры…</span>
+              <span class="muted small">{prefs.t("models.auto.loading")}</span>
             {:else if auto}
-              <div class="reco-grid">
-                <span class="k">Слои на GPU</span>
-                <span class="v">{auto.ngl >= 99 ? "все" : auto.ngl}</span>
-                <span class="k">Контекст</span>
-                <span class="v">{auto.ctx.toLocaleString()}</span>
-                <span class="k">KV-кэш</span>
-                <span class="v">{auto.kv_quant}</span>
-                <span class="k">Потоки CPU</span>
-                <span class="v">{auto.threads}</span>
-                {#if auto.est_vram_bytes > 0}
-                  <span class="k">≈ VRAM</span>
-                  <span class="v">{formatBytes(auto.est_vram_bytes)}</span>
-                {/if}
-              </div>
-              <p class="reco-why {auto.full_offload ? 'ok' : 'warn'}">{auto.rationale}</p>
+              {#if prefs.showAutoDetails}
+                <div class="reco-grid">
+                  <span class="k">{prefs.t("models.auto.ngl")}</span>
+                  <span class="v">{auto.ngl >= 99 ? prefs.t("models.auto.ngl_all") : auto.ngl}</span>
+                  <span class="k">{prefs.t("models.auto.ctx")}</span>
+                  <span class="v">{auto.ctx.toLocaleString()}</span>
+                  {#if prefs.showAdvanced}
+                    <span class="k">{prefs.t("models.auto.kv")}</span>
+                    <span class="v">{auto.kv_quant}</span>
+                    <span class="k">{prefs.t("models.auto.threads")}</span>
+                    <span class="v">{auto.threads}</span>
+                  {/if}
+                  {#if auto.est_vram_bytes > 0}
+                    <span class="k">{prefs.t("models.auto.vram")}</span>
+                    <span class="v">{formatBytes(auto.est_vram_bytes)}</span>
+                  {/if}
+                </div>
+                <p class="reco-why {auto.full_offload ? 'ok' : 'warn'}">{auto.rationale}</p>
+              {:else}
+                <p class="reco-why {auto.full_offload ? 'ok' : 'warn'}">
+                  {auto.full_offload
+                    ? prefs.t("models.auto.simple_ok")
+                    : prefs.t("models.auto.simple_warn")}
+                </p>
+              {/if}
             {:else}
-              <span class="muted small">Не удалось рассчитать — будут ручные настройки.</span>
+              <span class="muted small">{prefs.t("models.auto.fail")}</span>
             {/if}
           </div>
 
@@ -239,16 +270,18 @@
             onclick={() => launch(selectedModel)}
           >
             {#if serverState.running}
-              ● Сервер уже запущен
+              ● {prefs.t("models.already")}
             {:else if serverState.starting}
-              Запуск…
+              {prefs.t("models.launching")}
             {:else}
-              ▶ Запустить
+              ▶ {prefs.t("models.launch")}
             {/if}
           </button>
-          <p class="path-hint" title={selectedModel.path}>{selectedModel.path}</p>
+          {#if prefs.showAdvanced}
+            <p class="path-hint" title={selectedModel.path}>{selectedModel.path}</p>
+          {/if}
         {:else}
-          <div class="pick-hint muted">← Выбери модель, чтобы увидеть детали</div>
+          <div class="pick-hint muted">{prefs.t("models.pick")}</div>
         {/if}
       </aside>
     </div>
@@ -330,6 +363,7 @@
   }
   .d-name { font-size: 15px; word-break: break-word; }
   .d-size { color: var(--accent); font-weight: 600; margin-top: -6px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+  .meta.soft { font-size: 12.5px; }
   .meta-grid {
     display: grid;
     grid-template-columns: auto 1fr;

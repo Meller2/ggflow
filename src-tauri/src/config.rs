@@ -58,6 +58,19 @@ pub struct Settings {
     pub runtime_tag: Option<String>,
     /// Backend: "cpu" | "vulkan" | "cuda-12.4".
     pub runtime_backend: Option<String>,
+    /// Язык UI: "ru" | "en".
+    pub locale: String,
+    /// Уровень: "beginner" | "intermediate" | "expert".
+    /// Для старых конфигов без поля — "expert", чтобы не урезать уже настроенный UI.
+    #[serde(default = "default_expertise")]
+    pub expertise: String,
+    /// Открывать Web-UI llama-server, когда сервер стал ready.
+    pub open_ui_on_ready: bool,
+}
+
+fn default_expertise() -> String {
+    // Старые settings.json без поля: сохраняем полный UI.
+    "expert".into()
 }
 
 impl Default for Settings {
@@ -70,6 +83,9 @@ impl Default for Settings {
             runtime_managed: false,
             runtime_tag: None,
             runtime_backend: None,
+            locale: "ru".into(),
+            expertise: "beginner".into(), // новый пользователь — с wizard'а
+            open_ui_on_ready: true,
         }
     }
 }

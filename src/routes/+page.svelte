@@ -1,6 +1,7 @@
 <script lang="ts">
   import { loadSettings, type Settings } from "$lib/api";
   import { serverState } from "$lib/server.svelte";
+  import { prefs } from "$lib/prefs.svelte";
   import Onboarding from "$lib/components/Onboarding.svelte";
   import LocalModels from "$lib/components/LocalModels.svelte";
   import Catalog from "$lib/components/Catalog.svelte";
@@ -13,6 +14,7 @@
 
   async function init() {
     settings = await loadSettings();
+    prefs.apply(settings);
     loading = false;
     await serverState.init();
   }
@@ -20,20 +22,24 @@
 
   function onOnboarded(s: Settings) {
     settings = s;
+    prefs.apply(s);
+    // Новичку удобнее сразу в каталог.
+    if (prefs.isBeginner) tab = "catalog";
   }
   function onSettingsChanged(s: Settings) {
     settings = s;
+    prefs.apply(s);
   }
   function goRunning() {
     tab = "running";
   }
 
-  const TABS = [
-    { id: "models", label: "Модели", icon: "▤" },
-    { id: "catalog", label: "Каталог", icon: "⌕" },
-    { id: "running", label: "Запущено", icon: "◉" },
-    { id: "settings", label: "Настройки", icon: "⚙" },
-  ] as const;
+  const tabs = $derived([
+    { id: "models" as const, label: prefs.t("app.tab.models"), icon: "▤" },
+    { id: "catalog" as const, label: prefs.t("app.tab.catalog"), icon: "⌕" },
+    { id: "running" as const, label: prefs.t("app.tab.running"), icon: "◉" },
+    { id: "settings" as const, label: prefs.t("app.tab.settings"), icon: "⚙" },
+  ]);
 </script>
 
 {#if loading}
@@ -47,10 +53,10 @@
     <nav class="sidebar">
       <div class="brand">
         <img class="logo-mark sm" src="/logo1.png" alt="" />
-        <span class="brand-name">LlamaLauncher</span>
+        <span class="brand-name">{prefs.t("app.name")}</span>
       </div>
       <div class="nav">
-        {#each TABS as t}
+        {#each tabs as t}
           <button
             class="nav-item {tab === t.id ? 'active' : ''}"
             onclick={() => (tab = t.id)}
@@ -83,8 +89,6 @@
   .boot {
     height: 100vh; display: grid; place-items: center;
   }
-  /* Логотип с прозрачным фоном и собственным янтарным свечением —
-     органично ложится на угольный фон, без квадратной подложки. */
   .logo-mark {
     display: block;
     object-fit: contain;
@@ -134,7 +138,6 @@
     background: var(--accent-soft);
     color: var(--accent-hover);
   }
-  /* Акцентная риска слева у активного таба — «инструментальный» штрих. */
   .nav-item.active::before {
     content: "";
     position: absolute; left: 0; top: 50%; transform: translateY(-50%);

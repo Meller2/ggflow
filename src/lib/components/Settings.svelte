@@ -12,6 +12,8 @@
     type RuntimeStatus,
     type RuntimeProgress,
   } from "$lib/api";
+  import { prefs } from "$lib/prefs.svelte";
+  import type { Expertise, Locale } from "$lib/i18n";
 
   let { settings, onchange }: {
     settings: Settings;
@@ -51,7 +53,9 @@
   }
 
   async function browseLlama() {
-    const dir = await pickFolder("Папка с llama-server.exe");
+    const dir = await pickFolder(
+      prefs.locale === "en" ? "Folder with llama-server.exe" : "Папка с llama-server.exe",
+    );
     if (dir) {
       draft.llama_dir = dir;
       draft.runtime_managed = false;
@@ -60,7 +64,9 @@
   }
 
   async function addFolder() {
-    const dir = await pickFolder("Папка с моделями (.gguf)");
+    const dir = await pickFolder(
+      prefs.locale === "en" ? "Folder with models (.gguf)" : "Папка с моделями (.gguf)",
+    );
     if (dir && !draft.model_folders.includes(dir)) {
       draft.model_folders = [...draft.model_folders, dir];
     }
@@ -90,7 +96,7 @@
       }
     } catch (e) {
       const msg = String(e);
-      if (!msg.includes("отменена") && !msg.includes("Отменена")) {
+      if (!msg.toLowerCase().includes("cancel") && !msg.includes("отмен")) {
         installError = msg;
       }
     } finally {
@@ -103,15 +109,27 @@
   }
 
   async function save() {
+    // Применяем язык/уровень сразу, до await.
+    prefs.apply(draft);
     await saveSettings($state.snapshot(draft));
     onchange($state.snapshot(draft));
     saved = true;
     setTimeout(() => (saved = false), 1800);
   }
 
+  function setLocale(l: Locale) {
+    draft.locale = l;
+    prefs.locale = l;
+  }
+  function setExpertise(e: Expertise) {
+    draft.expertise = e;
+    prefs.expertise = e;
+  }
+
   $effect(() => { if (llamaValid === null) checkLlama(); });
 
   const KV_OPTS = ["f16", "q8_0", "q4_0"];
+  const EXP_OPTS: Expertise[] = ["beginner", "intermediate", "expert"];
   const pct = $derived(
     progress && progress.total > 0
       ? Math.min(100, (progress.downloaded / progress.total) * 100)
@@ -120,19 +138,52 @@
 </script>
 
 <div class="page">
-  <header><h2>Настройки</h2></header>
+  <header><h2>{prefs.t("set.title")}</h2></header>
 
   <div class="glass block">
-    <span class="lbl">Движок llama.cpp</span>
+    <span class="lbl">{prefs.t("set.prefs")}</span>
+    <div class="fld">
+      <span class="fl">{prefs.t("set.lang")}</span>
+      <div class="seg">
+        <button
+          class="seg-btn {draft.locale === 'ru' ? 'on' : ''}"
+          onclick={() => setLocale("ru")}
+        >Русский</button>
+        <button
+          class="seg-btn {draft.locale === 'en' ? 'on' : ''}"
+          onclick={() => setLocale("en")}
+        >English</button>
+      </div>
+    </div>
+    <div class="fld">
+      <span class="fl">{prefs.t("set.exp")}</span>
+      <div class="seg wrap">
+        {#each EXP_OPTS as e}
+          <button
+            class="seg-btn {draft.expertise === e ? 'on' : ''}"
+            onclick={() => setExpertise(e)}
+          >{prefs.t(`onb.exp.${e}`)}</button>
+        {/each}
+      </div>
+      <p class="hint muted">{prefs.t("set.exp.hint")}</p>
+    </div>
+    <label class="chk">
+      <input type="checkbox" bind:checked={draft.open_ui_on_ready} />
+      <span>{prefs.t("set.open_ui")}</span>
+    </label>
+  </div>
+
+  <div class="glass block">
+    <span class="lbl">{prefs.t("set.engine")}</span>
 
     {#if rt?.installed || draft.runtime_managed}
       <div class="engine-row">
         <div>
           <div class="engine-title">
             {#if llamaValid}
-              <span class="ok">✓ Установлен</span>
+              <span class="ok">✓ {prefs.t("set.engine.installed")}</span>
             {:else}
-              <span class="bad">✕ Не найден</span>
+              <span class="bad">✕ {prefs.t("set.engine.missing")}</span>
             {/if}
             {#if draft.runtime_tag || draft.runtime_backend || rt?.backend_label}
               <span class="meta">
@@ -142,40 +193,37 @@
               </span>
             {/if}
           </div>
-          {#if draft.llama_dir}
+          {#if draft.llama_dir && prefs.showAdvanced}
             <p class="path-hint" title={draft.llama_dir}>{draft.llama_dir}</p>
           {/if}
           {#if draft.runtime_managed || rt?.installed}
-            <p class="hint muted">
-              Managed runtime: рядом с программой, если туда можно писать; иначе в LocalAppData.
-            </p>
+            <p class="hint muted">{prefs.t("set.engine.managed")}</p>
           {/if}
         </div>
         <button class="btn" onclick={installEngine} disabled={installing}>
-          {installing ? "Устанавливаю…" : "Обновить / переустановить"}
+          {installing ? prefs.t("set.engine.installing") : prefs.t("set.engine.update")}
         </button>
       </div>
     {:else}
       <p class="hint muted">
-        Движок можно поставить автоматически
-        {#if rt} (рекомендуем: <b>{rt.recommended_label}</b>){/if}.
+        {#if rt}{prefs.t("set.engine.rec", { label: rt.recommended_label })}{/if}
       </p>
       <button class="btn btn-primary" onclick={installEngine} disabled={installing}>
-        {installing ? "Устанавливаю…" : "↓ Установить llama.cpp"}
+        {installing ? prefs.t("set.engine.installing") : `↓ ${prefs.t("set.engine.install")}`}
       </button>
     {/if}
 
     {#if installing || (progress && !progress.done && !progress.canceled)}
       <div class="dl">
         <div class="dl-top">
-          <span>{progress?.stage ?? "Готовлю…"}</span>
+          <span>{progress?.stage ?? "…"}</span>
           {#if progress && progress.total > 0}
             <span class="dl-num">
               {formatBytes(progress.downloaded)} / {formatBytes(progress.total)} · {pct.toFixed(0)}%
             </span>
           {/if}
           {#if installing}
-            <button class="btn tiny" onclick={cancelInstall}>Отмена</button>
+            <button class="btn tiny" onclick={cancelInstall}>{prefs.t("cat.cancel")}</button>
           {/if}
         </div>
         <div class="bar">
@@ -190,70 +238,91 @@
       <div class="bad hint">{installError}</div>
     {/if}
 
-    <details class="adv">
-      <summary>Указать папку вручную</summary>
-      <div class="row">
-        <input class="input" bind:value={draft.llama_dir}
-          oninput={() => { llamaValid = null; draft.runtime_managed = false; }}
-          onblur={checkLlama} />
-        <button class="btn" onclick={browseLlama}>Обзор…</button>
-      </div>
-      <div class="hint">
-        {#if llamaValid === true}<span class="ok">✓ llama-server.exe найден</span>
-        {:else if llamaValid === false}<span class="bad">✕ llama-server.exe не найден</span>
-        {:else}<span class="muted">Проверка…</span>{/if}
-      </div>
-    </details>
+    {#if prefs.showPowerPaths}
+      <details class="adv">
+        <summary>{prefs.t("set.engine.manual")}</summary>
+        <div class="row">
+          <input class="input" bind:value={draft.llama_dir}
+            oninput={() => { llamaValid = null; draft.runtime_managed = false; }}
+            onblur={checkLlama} />
+          <button class="btn" onclick={browseLlama}>{prefs.t("set.browse")}</button>
+        </div>
+        <div class="hint">
+          {#if llamaValid === true}<span class="ok">✓ {prefs.t("set.found")}</span>
+          {:else if llamaValid === false}<span class="bad">✕ {prefs.t("set.not_found")}</span>
+          {:else}<span class="muted">{prefs.t("set.checking")}</span>{/if}
+        </div>
+      </details>
+    {/if}
   </div>
 
   <div class="glass block">
-    <span class="lbl">Папки с моделями</span>
+    <span class="lbl">{prefs.t("set.folders")}</span>
     {#each draft.model_folders as f (f)}
       <div class="chip">
         <span class="path" title={f}>{f}</span>
-        <button class="x" onclick={() => removeFolder(f)} aria-label="Убрать">✕</button>
+        {#if prefs.showPowerPaths || draft.model_folders.length > 1}
+          <button class="x" onclick={() => removeFolder(f)} aria-label="remove">✕</button>
+        {/if}
       </div>
     {/each}
-    <button class="btn add" onclick={addFolder}>+ Добавить папку</button>
+    <button class="btn add" onclick={addFolder}>+ {prefs.t("set.folders.add")}</button>
   </div>
 
-  <div class="glass block">
-    <span class="lbl">Параметры запуска по умолчанию</span>
-    <div class="grid">
-      <div class="fld">
-        <span class="fl">Контекст</span>
-        <input class="input" type="number" min="512" step="512" bind:value={draft.defaults.ctx} />
-      </div>
-      <div class="fld">
-        <span class="fl">KV-квант</span>
-        <select class="input" bind:value={draft.defaults.kv_quant}>
-          {#each KV_OPTS as k}<option value={k}>{k}</option>{/each}
-        </select>
-      </div>
-      <div class="fld">
-        <span class="fl">Потоки CPU</span>
-        <input class="input" type="number" min="1" max="64" bind:value={draft.defaults.threads} />
-      </div>
-      <div class="fld">
-        <span class="fl">Слоёв на GPU (-ngl)</span>
-        <input class="input" type="number" min="0" max="999" bind:value={draft.defaults.ngl} />
-      </div>
-      <div class="fld">
-        <span class="fl">Порт</span>
-        <input class="input" type="number" min="1024" max="65535" bind:value={draft.defaults.port} />
-      </div>
-      <div class="fld check">
-        <label class="chk">
-          <input type="checkbox" bind:checked={draft.defaults.tools} />
-          <span>Инструменты (--tools all)</span>
-        </label>
+  {#if prefs.showAdvanced}
+    <div class="glass block">
+      <span class="lbl">{prefs.t("set.launch")}</span>
+      <div class="grid">
+        <div class="fld">
+          <span class="fl">{prefs.t("set.launch.ctx")}</span>
+          <input class="input" type="number" min="512" step="512" bind:value={draft.defaults.ctx} />
+        </div>
+        <div class="fld">
+          <span class="fl">{prefs.t("set.launch.kv")}</span>
+          <select class="input" bind:value={draft.defaults.kv_quant}>
+            {#each KV_OPTS as k}<option value={k}>{k}</option>{/each}
+          </select>
+        </div>
+        <div class="fld">
+          <span class="fl">{prefs.t("set.launch.threads")}</span>
+          <input class="input" type="number" min="1" max="64" bind:value={draft.defaults.threads} />
+        </div>
+        <div class="fld">
+          <span class="fl">{prefs.t("set.launch.ngl")}</span>
+          <input class="input" type="number" min="0" max="999" bind:value={draft.defaults.ngl} />
+        </div>
+        <div class="fld">
+          <span class="fl">{prefs.t("set.launch.port")}</span>
+          <input class="input" type="number" min="1024" max="65535" bind:value={draft.defaults.port} />
+        </div>
+        <div class="fld check">
+          <label class="chk">
+            <input type="checkbox" bind:checked={draft.defaults.tools} />
+            <span>{prefs.t("set.launch.tools")}</span>
+          </label>
+        </div>
       </div>
     </div>
-  </div>
+  {:else if prefs.isBeginner}
+    <div class="glass block">
+      <span class="lbl">{prefs.t("set.launch")}</span>
+      <p class="hint muted">{prefs.t("set.launch.hint_beginner")}</p>
+    </div>
+  {:else}
+    <div class="glass block">
+      <span class="lbl">{prefs.t("set.launch")}</span>
+      <div class="grid">
+        <div class="fld">
+          <span class="fl">{prefs.t("set.launch.port")}</span>
+          <input class="input" type="number" min="1024" max="65535" bind:value={draft.defaults.port} />
+        </div>
+      </div>
+    </div>
+  {/if}
 
   <div class="save-row">
-    <button class="btn btn-primary" onclick={save}>Сохранить</button>
-    {#if saved}<span class="saved-msg">✓ Сохранено</span>{/if}
+    <button class="btn btn-primary" onclick={save}>{prefs.t("set.save")}</button>
+    {#if saved}<span class="saved-msg">✓ {prefs.t("set.saved")}</span>{/if}
   </div>
 </div>
 
@@ -267,8 +336,21 @@
   }
   .row { display: flex; gap: 10px; }
   .row .input { flex: 1; }
-  .hint { font-size: 12.5px; }
+  .hint { font-size: 12.5px; margin: 0; }
   .ok { color: var(--ok); } .bad { color: var(--danger); } .muted { color: var(--text-2); }
+
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; }
+  .seg.wrap { flex-wrap: wrap; }
+  .seg-btn {
+    padding: 8px 14px; border-radius: var(--radius-m);
+    border: 1px solid var(--border); background: rgba(0,0,0,.2);
+    font-size: 13px; color: var(--text-1);
+    transition: border-color .12s, background .12s, color .12s;
+  }
+  .seg-btn:hover { background: var(--surface-hover); color: var(--text-0); }
+  .seg-btn.on {
+    border-color: var(--accent); background: var(--accent-soft); color: var(--accent-hover);
+  }
 
   .engine-row {
     display: flex; justify-content: space-between; align-items: flex-start; gap: 14px;

@@ -1,13 +1,19 @@
 <script lang="ts">
   import { serverState } from "$lib/server.svelte";
+  import { prefs } from "$lib/prefs.svelte";
 
   let logEl = $state<HTMLDivElement | null>(null);
   let autoScroll = $state(true);
+  let showLog = $state(false);
 
-  // Автоскролл к низу при новых строках, если пользователь не проскроллил вверх.
   $effect(() => {
-    serverState.log.length; // зависимость
-    if (autoScroll && logEl) {
+    // При смене уровня — дефолт раскрытия лога.
+    showLog = prefs.logExpandedByDefault;
+  });
+
+  $effect(() => {
+    serverState.log.length;
+    if (autoScroll && logEl && showLog) {
       logEl.scrollTop = logEl.scrollHeight;
     }
   });
@@ -21,12 +27,12 @@
 
   const statusLabel = $derived(
     serverState.starting
-      ? "Запуск…"
+      ? prefs.t("run.starting")
       : serverState.ready
-        ? "Работает"
+        ? prefs.t("run.ready")
         : serverState.running
-          ? "Загрузка модели…"
-          : "Остановлен",
+          ? prefs.t("run.loading")
+          : prefs.t("run.stopped"),
   );
 </script>
 
@@ -41,9 +47,9 @@
             : 'off'}"
       ></span>
       <div>
-        <h2>{serverState.modelName ?? "Сервер"}</h2>
+        <h2>{serverState.modelName ?? prefs.t("run.title")}</h2>
         <p class="sub">
-          {statusLabel}{#if serverState.port && serverState.running}
+          {statusLabel}{#if serverState.port && serverState.running && prefs.showAdvanced}
             · 127.0.0.1:{serverState.port}{/if}
         </p>
       </div>
@@ -51,7 +57,7 @@
     <div class="actions">
       {#if serverState.ready}
         <button class="btn btn-primary" onclick={() => serverState.openWebUi()}>
-          ⧉ Открыть Web-UI
+          ⧉ {prefs.t("run.open")}
         </button>
       {/if}
       {#if serverState.running}
@@ -60,7 +66,7 @@
           onclick={() => serverState.stop()}
           disabled={serverState.stopping}
         >
-          {serverState.stopping ? "Останавливаю…" : "■ Стоп"}
+          {serverState.stopping ? prefs.t("run.stopping") : `■ ${prefs.t("run.stop")}`}
         </button>
       {/if}
     </div>
@@ -69,35 +75,47 @@
   {#if serverState.error}
     <div class="glass err">
       <span>{serverState.error}</span>
-      <button class="x" onclick={() => serverState.clearError()} aria-label="Скрыть">✕</button>
+      <button class="x" onclick={() => serverState.clearError()} aria-label="dismiss">✕</button>
     </div>
   {/if}
 
   {#if !serverState.running && serverState.log.length === 0}
     <div class="glass empty">
       <div class="empty-orb"></div>
-      <h3>Сервер не запущен</h3>
-      <p>Выбери модель на вкладке «Модели» и нажми «Запустить».</p>
+      <h3>{prefs.t("run.empty.title")}</h3>
+      <p>{prefs.t("run.empty.body")}</p>
     </div>
   {:else}
-    <div class="glass console" bind:this={logEl} onscroll={onScroll}>
-      {#each serverState.log as line, i (i)}
-        <div class="line">{line}</div>
-      {/each}
-      {#if serverState.log.length === 0}
-        <div class="line dim">Ожидание вывода…</div>
-      {/if}
-    </div>
-    {#if !autoScroll}
-      <button
-        class="btn scroll-btn"
-        onclick={() => {
-          autoScroll = true;
-          if (logEl) logEl.scrollTop = logEl.scrollHeight;
-        }}
-      >
-        ↓ К последним строкам
+    {#if !prefs.isExpert}
+      <button class="btn log-toggle" onclick={() => (showLog = !showLog)}>
+        {showLog ? prefs.t("run.log_hide") : prefs.t("run.log_show")}
       </button>
+    {/if}
+    {#if showLog || prefs.isExpert}
+      <div class="glass console" bind:this={logEl} onscroll={onScroll}>
+        {#each serverState.log as line, i (i)}
+          <div class="line">{line}</div>
+        {/each}
+        {#if serverState.log.length === 0}
+          <div class="line dim">{prefs.t("run.log_wait")}</div>
+        {/if}
+      </div>
+      {#if !autoScroll}
+        <button
+          class="btn scroll-btn"
+          onclick={() => {
+            autoScroll = true;
+            if (logEl) logEl.scrollTop = logEl.scrollHeight;
+          }}
+        >
+          ↓ {prefs.t("run.scroll")}
+        </button>
+      {/if}
+    {:else if serverState.running && !serverState.ready}
+      <div class="glass loading-card">
+        <div class="pulse-orb"></div>
+        <p>{prefs.t("run.loading")}</p>
+      </div>
     {/if}
   {/if}
 </div>
@@ -129,6 +147,8 @@
   }
   .err .x { color: var(--danger); padding: 2px 6px; }
 
+  .log-toggle { align-self: flex-start; }
+
   .console {
     flex: 1; min-height: 0; overflow-y: auto;
     padding: 14px 16px;
@@ -141,6 +161,20 @@
   .line.dim { color: var(--text-2); }
 
   .scroll-btn { align-self: center; margin-top: -6px; }
+
+  .loading-card {
+    flex: 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 12px; color: var(--text-1);
+  }
+  .pulse-orb {
+    width: 48px; height: 48px; border-radius: 50%;
+    background: radial-gradient(circle at 32% 30%, var(--accent-glow), transparent 70%);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); opacity: .7; }
+    50% { transform: scale(1.08); opacity: 1; }
+  }
 
   .empty {
     padding: 44px; text-align: center;

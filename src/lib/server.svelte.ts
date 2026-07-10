@@ -7,6 +7,7 @@ import {
   openExternal,
   type LaunchConfig,
 } from "$lib/api";
+import { prefs } from "$lib/prefs.svelte";
 
 const MAX_LINES = 2000;
 
@@ -22,6 +23,8 @@ class ServerStore {
 
   #unlisten: UnlistenFn[] = [];
   #initialized = false;
+  /** Уже авто-открывали UI для текущего ready-цикла. */
+  #autoOpened = false;
 
   /** Подписаться на события бэкенда. Вызывать один раз при старте UI. */
   async init() {
@@ -41,6 +44,11 @@ class ServerStore {
         this.ready = true;
         this.running = true;
         this.port = e.payload;
+        // Авто-открытие чата — один раз за цикл готовности.
+        if (prefs.openUiOnReady && !this.#autoOpened) {
+          this.#autoOpened = true;
+          openExternal(`http://127.0.0.1:${e.payload}`).catch(() => {});
+        }
       }),
     );
     this.#unlisten.push(
@@ -79,6 +87,7 @@ class ServerStore {
     this.error = null;
     this.starting = true;
     this.ready = false;
+    this.#autoOpened = false;
     this.log = [];
     try {
       const st = await startServer(config);

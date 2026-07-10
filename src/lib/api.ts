@@ -24,6 +24,12 @@ export interface Settings {
   runtime_tag: string | null;
   /** "cpu" | "vulkan" | "cuda-12.4" */
   runtime_backend: string | null;
+  /** "ru" | "en" */
+  locale: string;
+  /** "beginner" | "intermediate" | "expert" */
+  expertise: string;
+  /** Открывать Web-UI при server-ready. */
+  open_ui_on_ready: boolean;
 }
 
 export interface ModelInfo {
