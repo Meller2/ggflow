@@ -1,6 +1,6 @@
 [package]
 name = "llama-launcher"
-version = "0.1.0"
+version = "0.2.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -29,7 +29,10 @@ serde_json = "1"
 reqwest = { version = "0.12", features = ["json"] }
 
 # Асинхронная запись файла при скачивании (не блокируем исполнитель Tokio).
-tokio = { version = "1", features = ["fs", "io-util"] }
+tokio = { version = "1", features = ["fs", "io-util", "rt-multi-thread"] }
+
+# Распаковка zip-релизов llama.cpp (managed runtime).
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # Детект железа (Фаза 3): VRAM через DXGI, RAM через GlobalMemoryStatusEx.
 [target.'cfg(windows)'.dependencies]

@@ -6,11 +6,22 @@ Built with [Tauri](https://tauri.app/), [SvelteKit](https://svelte.dev/) and Typ
 
 ## Features
 
+- **Auto-install runtime** — downloads official `llama.cpp` builds (CUDA / Vulkan / CPU) next to the app (portable).
 - **Model catalog** — browse and download GGUF models straight from Hugging Face.
 - **Local models** — manage the models already on disk.
 - **Auto-config** — detects your hardware (GPU/CPU/RAM) and picks sensible launch parameters.
 - **One-click run** — start/stop the llama.cpp server and watch its status live.
 - **Onboarding & settings** — first-run setup and configurable paths.
+
+### Portable layout
+
+After auto-install, files live next to the executable:
+
+```
+LlamaLauncher.exe
+runtime/<tag>/<backend>/llama-server.exe   # managed engine
+models/                                      # default GGUF folder
+```
 
 ## Development
 

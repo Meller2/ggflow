@@ -44,7 +44,7 @@ impl Default for LaunchDefaults {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// Папка с llama-server.exe (выбирается при онбординге).
+    /// Папка с llama-server.exe (managed runtime или ручной путь).
     pub llama_dir: Option<String>,
     /// Папки, где искать .gguf модели.
     pub model_folders: Vec<String>,
@@ -52,6 +52,12 @@ pub struct Settings {
     pub defaults: LaunchDefaults,
     /// Пройден ли онбординг.
     pub onboarded: bool,
+    /// Runtime поставлен лаунчером (portable, рядом с exe).
+    pub runtime_managed: bool,
+    /// Тег релиза llama.cpp, напр. "b9952".
+    pub runtime_tag: Option<String>,
+    /// Backend: "cpu" | "vulkan" | "cuda-12.4".
+    pub runtime_backend: Option<String>,
 }
 
 impl Default for Settings {
@@ -61,6 +67,9 @@ impl Default for Settings {
             model_folders: Vec::new(),
             defaults: LaunchDefaults::default(),
             onboarded: false,
+            runtime_managed: false,
+            runtime_tag: None,
+            runtime_backend: None,
         }
     }
 }

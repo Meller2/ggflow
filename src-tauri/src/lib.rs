@@ -6,6 +6,7 @@ mod config;
 mod hardware;
 mod hf;
 mod models;
+mod runtime;
 mod server;
 
 use tauri::Manager;
@@ -17,6 +18,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(server::ServerState::default())
         .manage(hf::DownloadState::default())
+        .manage(runtime::RuntimeInstallState::default())
         // При закрытии окна убиваем запущенный llama-server, чтобы он не остался
         // осиротевшим процессом, держащим порт и VRAM.
         .on_window_event(|window, event| {
@@ -40,6 +42,10 @@ pub fn run() {
             hf::hf_list_files,
             hf::hf_download,
             hf::hf_cancel_download,
+            runtime::runtime_status,
+            runtime::runtime_install,
+            runtime::runtime_cancel_install,
+            runtime::ensure_default_models_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

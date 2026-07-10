@@ -16,3 +16,9 @@ vite.config.ts.timestamp-*
 # Scratch logo copies in repo root (the used ones live in static/)
 /logo.png
 /logo1.png
+
+# Portable runtime / models next to dev binary (auto-installed llama.cpp)
+/src-tauri/target/debug/runtime
+/src-tauri/target/debug/models
+/src-tauri/target/release/runtime
+/src-tauri/target/release/models

@@ -1,9 +1,16 @@
 <script lang="ts">
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import {
     validateLlamaDir,
     pickFolder,
     saveSettings,
+    runtimeStatus,
+    runtimeInstall,
+    runtimeCancelInstall,
+    formatBytes,
     type Settings,
+    type RuntimeStatus,
+    type RuntimeProgress,
   } from "$lib/api";
 
   let { settings, onchange }: {
@@ -11,10 +18,32 @@
     onchange: (s: Settings) => void;
   } = $props();
 
-  // Локальная рабочая копия.
   let draft = $state<Settings>(structuredClone($state.snapshot(settings)));
   let llamaValid = $state<boolean | null>(null);
   let saved = $state(false);
+
+  let rt = $state<RuntimeStatus | null>(null);
+  let installing = $state(false);
+  let progress = $state<RuntimeProgress | null>(null);
+  let installError = $state<string | null>(null);
+
+  let unlisten: UnlistenFn | null = null;
+  $effect(() => {
+    listen<RuntimeProgress>("runtime-progress", (e) => {
+      progress = e.payload;
+      if (e.payload.error) installError = e.payload.error;
+    }).then((u) => (unlisten = u));
+    return () => unlisten?.();
+  });
+
+  async function loadRt() {
+    try {
+      rt = await runtimeStatus();
+    } catch {
+      rt = null;
+    }
+  }
+  loadRt();
 
   async function checkLlama() {
     if (!draft.llama_dir) { llamaValid = false; return; }
@@ -23,7 +52,11 @@
 
   async function browseLlama() {
     const dir = await pickFolder("Папка с llama-server.exe");
-    if (dir) { draft.llama_dir = dir; await checkLlama(); }
+    if (dir) {
+      draft.llama_dir = dir;
+      draft.runtime_managed = false;
+      await checkLlama();
+    }
   }
 
   async function addFolder() {
@@ -37,6 +70,38 @@
     draft.model_folders = draft.model_folders.filter((x) => x !== f);
   }
 
+  async function installEngine() {
+    if (installing) return;
+    installing = true;
+    installError = null;
+    progress = null;
+    try {
+      const st = await runtimeInstall(null);
+      rt = st;
+      if (st.llama_dir) {
+        draft.llama_dir = st.llama_dir;
+        draft.runtime_managed = true;
+        draft.runtime_tag = st.tag;
+        draft.runtime_backend = st.backend;
+        llamaValid = true;
+      }
+      if (st.default_models_dir && !draft.model_folders.includes(st.default_models_dir)) {
+        draft.model_folders = [...draft.model_folders, st.default_models_dir];
+      }
+    } catch (e) {
+      const msg = String(e);
+      if (!msg.includes("отменена") && !msg.includes("Отменена")) {
+        installError = msg;
+      }
+    } finally {
+      installing = false;
+    }
+  }
+
+  async function cancelInstall() {
+    await runtimeCancelInstall();
+  }
+
   async function save() {
     await saveSettings($state.snapshot(draft));
     onchange($state.snapshot(draft));
@@ -47,23 +112,96 @@
   $effect(() => { if (llamaValid === null) checkLlama(); });
 
   const KV_OPTS = ["f16", "q8_0", "q4_0"];
+  const pct = $derived(
+    progress && progress.total > 0
+      ? Math.min(100, (progress.downloaded / progress.total) * 100)
+      : 0,
+  );
 </script>
 
 <div class="page">
   <header><h2>Настройки</h2></header>
 
   <div class="glass block">
-    <span class="lbl">Папка llama.cpp</span>
-    <div class="row">
-      <input class="input" bind:value={draft.llama_dir}
-        oninput={() => (llamaValid = null)} onblur={checkLlama} />
-      <button class="btn" onclick={browseLlama}>Обзор…</button>
-    </div>
-    <div class="hint">
-      {#if llamaValid === true}<span class="ok">✓ llama-server.exe найден</span>
-      {:else if llamaValid === false}<span class="bad">✕ llama-server.exe не найден</span>
-      {:else}<span class="muted">Проверка…</span>{/if}
-    </div>
+    <span class="lbl">Движок llama.cpp</span>
+
+    {#if rt?.installed || draft.runtime_managed}
+      <div class="engine-row">
+        <div>
+          <div class="engine-title">
+            {#if llamaValid}
+              <span class="ok">✓ Установлен</span>
+            {:else}
+              <span class="bad">✕ Не найден</span>
+            {/if}
+            {#if draft.runtime_tag || draft.runtime_backend || rt?.backend_label}
+              <span class="meta">
+                {draft.runtime_tag ?? rt?.tag ?? ""}
+                {#if (draft.runtime_tag || rt?.tag) && (rt?.backend_label || draft.runtime_backend)} · {/if}
+                {rt?.backend_label ?? draft.runtime_backend ?? ""}
+              </span>
+            {/if}
+          </div>
+          {#if draft.llama_dir}
+            <p class="path-hint" title={draft.llama_dir}>{draft.llama_dir}</p>
+          {/if}
+          {#if draft.runtime_managed || rt?.installed}
+            <p class="hint muted">Portable: runtime лежит рядом с программой.</p>
+          {/if}
+        </div>
+        <button class="btn" onclick={installEngine} disabled={installing}>
+          {installing ? "Устанавливаю…" : "Обновить / переустановить"}
+        </button>
+      </div>
+    {:else}
+      <p class="hint muted">
+        Движок можно поставить автоматически
+        {#if rt} (рекомендуем: <b>{rt.recommended_label}</b>){/if}.
+      </p>
+      <button class="btn btn-primary" onclick={installEngine} disabled={installing}>
+        {installing ? "Устанавливаю…" : "↓ Установить llama.cpp"}
+      </button>
+    {/if}
+
+    {#if installing || (progress && !progress.done && !progress.canceled)}
+      <div class="dl">
+        <div class="dl-top">
+          <span>{progress?.stage ?? "Готовлю…"}</span>
+          {#if progress && progress.total > 0}
+            <span class="dl-num">
+              {formatBytes(progress.downloaded)} / {formatBytes(progress.total)} · {pct.toFixed(0)}%
+            </span>
+          {/if}
+          {#if installing}
+            <button class="btn tiny" onclick={cancelInstall}>Отмена</button>
+          {/if}
+        </div>
+        <div class="bar">
+          <div
+            class="bar-fill {progress && progress.total > 0 ? '' : 'indet'}"
+            style="width:{progress && progress.total > 0 ? pct : 100}%"
+          ></div>
+        </div>
+      </div>
+    {/if}
+    {#if installError}
+      <div class="bad hint">{installError}</div>
+    {/if}
+
+    <details class="adv">
+      <summary>Указать папку вручную</summary>
+      <div class="row">
+        <input class="input" bind:value={draft.llama_dir}
+          oninput={() => { llamaValid = null; draft.runtime_managed = false; }}
+          onblur={checkLlama} />
+        <button class="btn" onclick={browseLlama}>Обзор…</button>
+      </div>
+      <div class="hint">
+        {#if llamaValid === true}<span class="ok">✓ llama-server.exe найден</span>
+        {:else if llamaValid === false}<span class="bad">✕ llama-server.exe не найден</span>
+        {:else}<span class="muted">Проверка…</span>{/if}
+      </div>
+    </details>
   </div>
 
   <div class="glass block">
@@ -129,6 +267,53 @@
   .row .input { flex: 1; }
   .hint { font-size: 12.5px; }
   .ok { color: var(--ok); } .bad { color: var(--danger); } .muted { color: var(--text-2); }
+
+  .engine-row {
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 14px;
+  }
+  .engine-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  .meta {
+    font-family: var(--font-mono); font-size: 12px; color: var(--text-1);
+    letter-spacing: -.02em;
+  }
+  .path-hint {
+    margin: 6px 0 0; font-size: 11px; color: var(--text-2);
+    font-family: var(--font-mono); letter-spacing: -.02em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    direction: rtl; text-align: left; max-width: 420px;
+  }
+  .tiny { padding: 5px 10px; font-size: 12px; }
+
+  .dl {
+    display: flex; flex-direction: column; gap: 7px;
+    padding: 12px 14px;
+    background: rgba(0,0,0,.22);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-m);
+  }
+  .dl-top { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+  .dl-top > span:first-child { flex: 1; font-weight: 500; }
+  .dl-num {
+    font-size: 11.5px; color: var(--text-2);
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  }
+  .bar { height: 7px; border-radius: 4px; background: rgba(0,0,0,.35); overflow: hidden; }
+  .bar-fill {
+    height: 100%; border-radius: 4px;
+    background: linear-gradient(90deg, var(--accent-press), var(--accent-hover));
+    box-shadow: 0 0 10px var(--accent-glow);
+    transition: width .2s ease;
+  }
+  .bar-fill.indet { animation: indet 1.1s ease-in-out infinite; }
+  @keyframes indet {
+    0% { opacity: .5; } 50% { opacity: 1; } 100% { opacity: .5; }
+  }
+
+  .adv { font-size: 13px; color: var(--text-1); }
+  .adv summary { cursor: pointer; color: var(--text-2); margin-bottom: 10px; }
+  .adv[open] summary { margin-bottom: 12px; }
+  .adv .row { margin-bottom: 8px; }
+
   .chip {
     display: flex; align-items: center; gap: 10px;
     padding: 9px 12px; background: rgba(0,0,0,.22);

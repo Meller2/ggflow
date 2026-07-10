@@ -19,6 +19,11 @@ export interface Settings {
   model_folders: string[];
   defaults: LaunchDefaults;
   onboarded: boolean;
+  /** Runtime поставлен лаунчером (portable). */
+  runtime_managed: boolean;
+  runtime_tag: string | null;
+  /** "cpu" | "vulkan" | "cuda-12.4" */
+  runtime_backend: string | null;
 }
 
 export interface ModelInfo {
@@ -153,6 +158,45 @@ export const hfDownload = (
 /** Отменить текущую загрузку. */
 export const hfCancelDownload = (): Promise<void> =>
   invoke("hf_cancel_download");
+
+// ── Managed runtime (llama.cpp) ───────────────────────────────────────────────
+
+export interface RuntimeStatus {
+  llama_dir: string | null;
+  installed: boolean;
+  tag: string | null;
+  backend: string | null;
+  backend_label: string | null;
+  recommended_backend: string;
+  recommended_label: string;
+  app_dir: string;
+  default_models_dir: string;
+  runtime_root: string;
+}
+
+/** Событие `runtime-progress` при установке движка. */
+export interface RuntimeProgress {
+  stage: string;
+  file: string;
+  downloaded: number;
+  total: number;
+  done: boolean;
+  error: string | null;
+  canceled: boolean;
+}
+
+export const runtimeStatus = (): Promise<RuntimeStatus> =>
+  invoke("runtime_status");
+
+/** backend: null/"auto" | "cpu" | "vulkan" | "cuda-12.4" */
+export const runtimeInstall = (backend?: string | null): Promise<RuntimeStatus> =>
+  invoke("runtime_install", { backend: backend ?? null });
+
+export const runtimeCancelInstall = (): Promise<void> =>
+  invoke("runtime_cancel_install");
+
+export const ensureDefaultModelsDir = (): Promise<string> =>
+  invoke("ensure_default_models_dir");
 
 /** Открыть URL во внешнем браузере. */
 export const openExternal = (url: string): Promise<void> => openUrl(url);
