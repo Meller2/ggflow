@@ -15,10 +15,11 @@ Built with [Tauri](https://tauri.app/), [SvelteKit](https://svelte.dev/) and Typ
 
 ### Portable layout
 
-After auto-install, files live next to the executable:
+After auto-install, files prefer the folder next to the executable (true portable).
+If that folder is not writable (e.g. Program Files), data goes to
+`%LOCALAPPDATA%\com.ilzat.llama-launcher\`:
 
 ```
-LlamaLauncher.exe
 runtime/<tag>/<backend>/llama-server.exe   # managed engine
 models/                                      # default GGUF folder
 ```
