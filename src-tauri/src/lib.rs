@@ -2,7 +2,6 @@
 // Модули доменной логики: настройки, скан моделей, жизненный цикл сервера.
 
 mod autoconfig;
-mod chat;
 mod config;
 mod hardware;
 mod hf;
@@ -20,7 +19,6 @@ pub fn run() {
         .manage(server::ServerState::default())
         .manage(hf::DownloadState::default())
         .manage(runtime::RuntimeInstallState::default())
-        .manage(chat::ChatState::default())
         // При закрытии окна убиваем запущенный llama-server, чтобы он не остался
         // осиротевшим процессом, держащим порт и VRAM.
         .on_window_event(|window, event| {
@@ -50,8 +48,6 @@ pub fn run() {
             runtime::runtime_install,
             runtime::runtime_cancel_install,
             runtime::ensure_default_models_dir,
-            chat::chat_stream,
-            chat::chat_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
