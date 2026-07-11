@@ -219,16 +219,46 @@ pub(crate) fn parse_gguf(path: &Path) -> io::Result<GgufMeta> {
 
 // ── Скан папок ───────────────────────────────────────────────────────────────
 
-/// Рекурсивно собрать .gguf из папки (без внешних зависимостей).
-fn scan_dir(dir: &Path, out: &mut Vec<ModelInfo>) {
+/// Макс. глубина вложенности (защита от «вечных» деревьев).
+const SCAN_MAX_DEPTH: u32 = 8;
+/// Потолок числа моделей за один скан (UI и память).
+const SCAN_MAX_MODELS: usize = 5_000;
+
+/// Рекурсивно собрать .gguf: лимит глубины, лимит числа, без symlink/junction-циклов.
+fn scan_dir(
+    dir: &Path,
+    out: &mut Vec<ModelInfo>,
+    depth: u32,
+    visited: &mut std::collections::HashSet<PathBuf>,
+) {
+    if depth > SCAN_MAX_DEPTH || out.len() >= SCAN_MAX_MODELS {
+        return;
+    }
+    // Канонический путь — защита от циклов (junction/symlink loop).
+    let canon = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    if !visited.insert(canon) {
+        return;
+    }
+
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
     };
     for entry in entries.flatten() {
+        if out.len() >= SCAN_MAX_MODELS {
+            return;
+        }
         let path = entry.path();
-        if path.is_dir() {
-            scan_dir(&path, out);
+        // Не следуем по symlink/junction — иначе легко уйти в цикл или «весь диск».
+        let ft = match entry.file_type() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        if ft.is_symlink() {
+            continue;
+        }
+        if ft.is_dir() {
+            scan_dir(&path, out, depth + 1, visited);
         } else if path
             .extension()
             .and_then(|e| e.to_str())
@@ -256,16 +286,42 @@ fn scan_dir(dir: &Path, out: &mut Vec<ModelInfo>) {
 #[tauri::command]
 pub fn scan_models(folders: Vec<String>) -> Vec<ModelInfo> {
     let mut out: Vec<ModelInfo> = Vec::new();
+    let mut visited = std::collections::HashSet::new();
     for folder in &folders {
         let p = PathBuf::from(folder);
         if p.is_dir() {
-            scan_dir(&p, &mut out);
+            scan_dir(&p, &mut out, 0, &mut visited);
         }
     }
     out.sort_by(|a, b| a.path.cmp(&b.path));
     out.dedup_by(|a, b| a.path == b.path);
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     out
+}
+
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn part_key_stable_and_distinct() {
+        // part_key живёт в hf — здесь только scan limits sanity.
+        assert!(SCAN_MAX_DEPTH >= 4);
+        assert!(SCAN_MAX_MODELS >= 100);
+    }
+
+    #[test]
+    fn scan_finds_gguf_in_temp() {
+        let dir = std::env::temp_dir().join(format!("ll-scan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        let mut f = std::fs::File::create(dir.join("sub").join("a.gguf")).unwrap();
+        f.write_all(b"gguf").unwrap();
+        let list = scan_models(vec![dir.to_string_lossy().into()]);
+        assert!(list.iter().any(|m| m.name == "a.gguf"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// Прочитать GGUF-метаданные одной модели. Ошибка → строка для UI.

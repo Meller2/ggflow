@@ -26,7 +26,7 @@ Three layers, kept in sync **by hand**:
    | Module | Role |
    |--------|------|
    | `config` | Settings load/save (app config dir), `setup_version`, path validation |
-   | `models` | GGUF folder scan + metadata parse |
+   | `models` | GGUF folder scan (depth≤8, max 5000, no symlinks) + metadata parse |
    | `server` | `llama-server` lifecycle (start/stop/status, logs, readiness) |
    | `hardware` | VRAM/RAM/CPU detect (Windows DXGI; non-Windows nvidia-smi / meminfo) |
    | `autoconfig` | Launch flags from hardware + GGUF meta |
@@ -82,7 +82,7 @@ Downloads a **pinned** llama.cpp release (`PINNED_TAG` + `PINNED_DIGESTS` SHA-25
 
 ### Downloads (`hf.rs`)
 
-Stream to `<file>.part`, rename on success. Cancel/fail keeps `.part`; resume via HTTP `Range` (206 append; 200 = restart). After stream, check `downloaded` vs `Content-Length` before rename. Writes use `tokio::fs`. Single-slot mutex — no concurrent downloads.
+Stream to keyed `{basename}.{hash12}.part` (hash of repo+path — no cross-repo collisions), rename on success. Cancel/fail keeps `.part`; resume via HTTP `Range` (206 append + Content-Range start check; 200 = restart). Free-space check when `expected_size` known. Emits `models-changed` on success so LocalModels auto-refreshes. Connect timeout 20s; no total body timeout (large GGUF). Single-slot mutex.
 
 ### Settings forward-compat
 

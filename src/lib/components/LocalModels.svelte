@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import {
     scanModels,
     readGgufMeta,
@@ -138,6 +139,15 @@
     // Пересканировать при изменении списка папок.
     settings.model_folders;
     refresh();
+  });
+
+  // После успешной загрузки из Каталога — список обновится без ручного Refresh.
+  let unlistenModels: UnlistenFn | null = null;
+  $effect(() => {
+    listen<string>("models-changed", () => {
+      refresh();
+    }).then((u) => (unlistenModels = u));
+    return () => unlistenModels?.();
   });
 </script>
 

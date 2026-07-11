@@ -134,7 +134,7 @@
       canceled: false,
     };
     try {
-      await hfDownload(repo, file.path, destDir);
+      await hfDownload(repo, file.path, destDir, file.size > 0 ? file.size : null);
     } catch (e) {
       // Отмена/сбой уже отражены событием; подстрахуемся.
       dl = null;

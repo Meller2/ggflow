@@ -1029,7 +1029,8 @@ fn fmt_mb(bytes: u64) -> String {
 
 /// Свободное место на томе, где лежит path (Windows: GetDiskFreeSpaceEx через std нестандартно —
 /// используем простой fallback: None если не смогли).
-fn free_space_bytes(path: &Path) -> Option<u64> {
+/// Свободное место на томе path (для проверок перед скачиванием/установкой).
+pub(crate) fn free_space_bytes(path: &Path) -> Option<u64> {
     // На Windows берём корень диска path.
     #[cfg(windows)]
     {

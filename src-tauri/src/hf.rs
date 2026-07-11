@@ -5,11 +5,16 @@
 //!   поиск   GET /api/models?search=&filter=gguf&sort=downloads&direction=-1&limit=40
 //!   файлы   GET /api/models/{repo}/tree/main?recursive=true
 //!   файл    GET /{repo}/resolve/main/{path}   (LFS-редирект reqwest проходит сам)
+//!
+//! `.part` именуется с учётом repo+path (короткий hash), чтобы два репо с одним
+//! basename GGUF не склеивали докачку.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -18,6 +23,8 @@ const HF: &str = "https://huggingface.co";
 const UA: &str = concat!("LlamaLauncher/", env!("CARGO_PKG_VERSION"));
 /// Не чаще одного события прогресса на ~2 МБ — чтобы не заваливать фронт.
 const EMIT_STEP: u64 = 2_000_000;
+/// Запас места на диске сверх размера файла (ФС / meta).
+const DISK_MARGIN: u64 = 64 * 1024 * 1024;
 
 // ── Модели данных ─────────────────────────────────────────────────────────────
 
@@ -105,8 +112,38 @@ enum DlErr {
 fn client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent(UA)
+        // Только connect: полный timeout на request убил бы многогигабайтные GGUF.
+        .connect_timeout(Duration::from_secs(20))
         .build()
         .map_err(|e| format!("Не удалось создать HTTP-клиент: {e}"))
+}
+
+/// Короткий hex SHA-256 (12 символов) от repo+path — ключ partial-файла.
+fn part_key_hex(repo: &str, file: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(repo.as_bytes());
+    h.update([0u8]);
+    h.update(file.as_bytes());
+    let dig = h.finalize();
+    dig.iter()
+        .take(6)
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// `{basename}.{hash12}.part` — уникально на (repo, path), итог rename → basename.
+fn part_path_for(dir: &Path, repo: &str, file: &str, basename: &str) -> PathBuf {
+    let key = part_key_hex(repo, file);
+    dir.join(format!("{basename}.{key}.part"))
+}
+
+/// Разбор `Content-Range: bytes START-END/TOTAL` → START.
+fn content_range_start(header: &str) -> Option<u64> {
+    // "bytes 1000-1999/5000" или "bytes 1000-1999/*"
+    let s = header.trim();
+    let rest = s.strip_prefix("bytes ")?.trim_start();
+    let start = rest.split('-').next()?.trim();
+    start.parse().ok()
 }
 
 /// Минимальное percent-кодирование строки поиска (RFC 3986 unreserved остаётся как есть).
@@ -196,8 +233,9 @@ pub async fn hf_list_files(repo: String) -> Result<Vec<HfFile>, String> {
     Ok(files)
 }
 
-/// Скачать файл репо в папку назначения. Стримит в `<файл>.part`, затем rename.
-/// Шлёт события `download-progress`. Возвращает итоговый путь.
+/// Скачать файл репо в папку назначения. Стримит в keyed `.part`, затем rename.
+/// `expected_size` — размер с UI (для проверки места); None = только после ответа сервера.
+/// Шлёт `download-progress` и при успехе `models-changed`.
 #[tauri::command]
 pub async fn hf_download(
     app: AppHandle,
@@ -205,6 +243,7 @@ pub async fn hf_download(
     repo: String,
     file: String,
     dest_dir: String,
+    expected_size: Option<u64>,
 ) -> Result<String, String> {
     // В репо путь может быть с подпапками — на диск кладём по базовому имени.
     let filename = Path::new(&file)
@@ -221,14 +260,28 @@ pub async fn hf_download(
     if final_path.exists() {
         return Err(format!("Файл «{filename}» уже есть в папке."));
     }
-    let part_path = dir.join(format!("{filename}.part"));
+    // Ключ зависит от repo+path — два репо с одним basename не делят .part.
+    let part_path = part_path_for(&dir, &repo, &file, &filename);
 
-    // Докачка: если .part уже есть, продолжим с его размера (HTTP Range).
-    // 0 = качаем с нуля.
+    // Докачка: если keyed .part уже есть, продолжим с его размера (HTTP Range).
     let resume_from = tokio::fs::metadata(&part_path)
         .await
         .map(|m| m.len())
         .unwrap_or(0);
+
+    // Место на диске (остаток = expected − already + margin).
+    if let Some(total) = expected_size {
+        let need = total.saturating_sub(resume_from).saturating_add(DISK_MARGIN);
+        if let Some(free) = crate::runtime::free_space_bytes(&dir) {
+            if free < need {
+                return Err(format!(
+                    "Недостаточно места на диске: нужно ещё ~{:.0} МБ, свободно ~{:.0} МБ.",
+                    need as f64 / (1024.0 * 1024.0),
+                    free as f64 / (1024.0 * 1024.0)
+                ));
+            }
+        }
+    }
 
     // Занять единственный слот загрузки.
     {
@@ -240,7 +293,16 @@ pub async fn hf_download(
     }
     state.cancel.store(false, Ordering::SeqCst);
 
-    let url = format!("{HF}/{repo}/resolve/main/{file}");
+    let encoded_file: String = file
+        .split('/')
+        .map(urlencode)
+        .collect::<Vec<_>>()
+        .join("/");
+    let url = format!(
+        "{HF}/{}/resolve/main/{encoded_file}",
+        urlencode_path_repo(&repo)
+    );
+
     let result = stream_to_file(&app, &state, &url, &part_path, &filename, resume_from).await;
 
     // Освободить слот в любом исходе.
@@ -248,22 +310,31 @@ pub async fn hf_download(
 
     match result {
         Ok(total) => {
+            // Windows: rename поверх не работает — final уже проверен на отсутствие.
             std::fs::rename(&part_path, &final_path)
                 .map_err(|e| format!("Не удалось сохранить файл: {e}"))?;
             emit(&app, &filename, total, total, true, None, false);
+            // Список локальных моделей может обновиться без ручного refresh.
+            let _ = app.emit("models-changed", final_path.to_string_lossy().to_string());
             Ok(final_path.to_string_lossy().to_string())
         }
         Err(DlErr::Canceled) => {
-            // .part НЕ удаляем — оставляем для последующей докачки.
             emit(&app, &filename, 0, 0, false, None, true);
             Err("Загрузка отменена.".into())
         }
         Err(DlErr::Failed(msg)) => {
-            // .part НЕ удаляем — при сетевом сбое даём шанс докачать позже.
             emit(&app, &filename, 0, 0, false, Some(msg.clone()), false);
             Err(msg)
         }
     }
+}
+
+/// Кодирует owner/name репо (слэш оставляем).
+fn urlencode_path_repo(repo: &str) -> String {
+    repo.split('/')
+        .map(urlencode)
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Отменить текущую загрузку (флаг подхватится в цикле стриминга).
@@ -328,6 +399,21 @@ async fn stream_to_file(
         )));
     }
 
+    // Content-Range должен начинаться с resume_from — иначе склейка мусора.
+    if resuming {
+        if let Some(cr) = resp.headers().get(reqwest::header::CONTENT_RANGE) {
+            if let Ok(s) = cr.to_str() {
+                if let Some(start) = content_range_start(s) {
+                    if start != resume_from {
+                        return Err(DlErr::Failed(format!(
+                            "Сервер отдал Range с позиции {start}, ожидали {resume_from}. Удалите .part и скачайте заново."
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
     let already: u64 = if resuming { resume_from } else { 0 };
     // content_length — это длина ТЕЛА ответа; при докачке прибавляем уже скачанное.
     let body_len = resp.content_length().unwrap_or(0);
@@ -386,4 +472,46 @@ async fn stream_to_file(
     }
 
     Ok(if total > 0 { total } else { downloaded })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn part_key_differs_by_repo() {
+        let a = part_key_hex("org/model-a", "q4.gguf");
+        let b = part_key_hex("org/model-b", "q4.gguf");
+        assert_ne!(a, b);
+        assert_eq!(a.len(), 12);
+        assert_eq!(
+            part_key_hex("org/model-a", "q4.gguf"),
+            a,
+            "stable for same inputs"
+        );
+    }
+
+    #[test]
+    fn content_range_start_parses() {
+        assert_eq!(
+            content_range_start("bytes 1000-1999/5000"),
+            Some(1000)
+        );
+        assert_eq!(content_range_start("bytes 0-99/*"), Some(0));
+        assert_eq!(content_range_start("invalid"), None);
+    }
+
+    #[test]
+    fn part_path_includes_hash_and_basename() {
+        let p = part_path_for(
+            Path::new("C:\\models"),
+            "owner/repo",
+            "sub/model.gguf",
+            "model.gguf",
+        );
+        let name = p.file_name().unwrap().to_string_lossy();
+        assert!(name.starts_with("model.gguf."));
+        assert!(name.ends_with(".part"));
+        assert!(name.contains(&part_key_hex("owner/repo", "sub/model.gguf")));
+    }
 }

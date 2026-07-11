@@ -174,7 +174,15 @@ export const hfDownload = (
   repo: string,
   file: string,
   destDir: string,
-): Promise<string> => invoke("hf_download", { repo, file, destDir });
+  /** Ожидаемый размер (байт) — проверка свободного места на диске. */
+  expectedSize?: number | null,
+): Promise<string> =>
+  invoke("hf_download", {
+    repo,
+    file,
+    destDir,
+    expectedSize: expectedSize ?? null,
+  });
 
 /** Отменить текущую загрузку. */
 export const hfCancelDownload = (): Promise<void> =>
