@@ -34,6 +34,7 @@ pub fn run() {
             config::setup_version,
             models::scan_models,
             models::read_gguf_meta,
+            models::reveal_in_folder,
             server::start_server,
             server::stop_server,
             server::server_status,

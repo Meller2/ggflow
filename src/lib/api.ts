@@ -143,6 +143,10 @@ export const scanModels = (folders: string[]): Promise<ModelInfo[]> =>
 export const readGgufMeta = (path: string): Promise<GgufMeta> =>
   invoke("read_gguf_meta", { path });
 
+/** Открыть Проводник и выделить файл. */
+export const revealInFolder = (path: string): Promise<void> =>
+  invoke("reveal_in_folder", { path });
+
 export const startServer = (config: LaunchConfig): Promise<ServerStatus> =>
   invoke("start_server", { config });
 

@@ -18,7 +18,19 @@
   import "@fontsource/jetbrains-mono/cyrillic-500.css";
 
   import "$lib/styles/theme.css";
+  import { onMount } from "svelte";
+
   let { children } = $props();
+
+  // Убираем стандартное «браузерное» ПКМ (Inspect / Reload) — для desktop это дёшево.
+  // Свои меню вешаем точечно (модели и т.д.).
+  onMount(() => {
+    const block = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+    document.addEventListener("contextmenu", block);
+    return () => document.removeEventListener("contextmenu", block);
+  });
 </script>
 
 {@render children()}

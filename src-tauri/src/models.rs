@@ -329,3 +329,51 @@ mod scan_tests {
 pub fn read_gguf_meta(path: String) -> Result<GgufMeta, String> {
     parse_gguf(Path::new(&path)).map_err(|e| format!("Не удалось прочитать GGUF: {e}"))
 }
+
+/// Открыть Проводник и выделить файл (Windows). Для ПКМ «Показать в папке».
+#[tauri::command]
+pub fn reveal_in_folder(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err(format!("Путь не найден: {path}"));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // canonicalize → \\?\C:\...; explorer любит обычный путь.
+        let full = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let mut s = full.to_string_lossy().into_owned();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            s = stripped.to_string();
+        }
+        // /select,"C:\path\file.gguf"
+        let arg = format!("/select,{s}");
+        Command::new("explorer")
+            .arg(&arg)
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| format!("Не удалось открыть Проводник: {e}"))?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        // macOS/Linux: открыть родительскую папку.
+        let dir = if p.is_dir() {
+            p
+        } else {
+            p.parent().unwrap_or(p)
+        };
+        std::process::Command::new("xdg-open")
+            .arg(dir)
+            .spawn()
+            .or_else(|_| {
+                std::process::Command::new("open")
+                    .arg(dir)
+                    .spawn()
+            })
+            .map_err(|e| format!("Не удалось открыть папку: {e}"))?;
+        Ok(())
+    }
+}

@@ -54,6 +54,10 @@
   --shadow-soft: 0 2px 16px rgba(0, 0, 0, 0.45);
   --shadow-lift: 0 12px 40px rgba(0, 0, 0, 0.6);
 
+  /* Кастомный titlebar (decorations: false). */
+  --titlebar-h: 40px;
+  --sidebar-w: 228px;
+
   font-family: var(--font-sans);
   font-size: 14px;
   color-scheme: dark;
@@ -197,4 +201,20 @@ button {
 ::selection {
   background: var(--accent-soft);
   color: var(--text-0);
+}
+
+/* Можно выделять/копировать: логи, пути, ошибки. */
+.selectable,
+.selectable * {
+  user-select: text;
+  cursor: text;
+}
+
+/* Каркас приложения под frameless window. */
+.app-frame {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-0);
 }
