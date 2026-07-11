@@ -71,14 +71,14 @@ When adding a launch parameter, update all three: `LaunchDefaults` / `LaunchConf
 
 ### Managed runtime (`runtime.rs`)
 
-Downloads official llama.cpp release zips (CUDA 12.4 / Vulkan / CPU), unpacks under portable layout:
+Downloads a **pinned** llama.cpp release (`PINNED_TAG` + `PINNED_DIGESTS` SHA-256 table — not `/releases/latest`). Flow: download → verify hash → extract to `*.staging` → smoke-test `llama-server --version` → atomic swap into live (old → `*.bak` → delete). Failed extract/smoke must not wipe a working install.
 
 ```
 {app_dir}/runtime/<tag>/<backend>/llama-server.exe
 {app_dir}/models/   # default GGUF folder
 ```
 
-`app_dir` = folder next to the executable if writable; else `%LOCALAPPDATA%\com.ilzat.llama-launcher\`. Backend pick: NVIDIA → CUDA, other GPU → Vulkan, else CPU. Commands: `runtime_status`, `runtime_install`, `runtime_cancel_install`, `ensure_default_models_dir`.
+`app_dir` = folder next to the executable if writable; else `%LOCALAPPDATA%\com.ilzat.llama-launcher\`. Backend pick: NVIDIA → CUDA, other GPU → Vulkan, else CPU. Commands: `runtime_status`, `runtime_install`, `runtime_cancel_install`, `ensure_default_models_dir`. When bumping the pin, update both `PINNED_TAG` and digests for all four Windows zip assets.
 
 ### Downloads (`hf.rs`)
 

@@ -1,7 +1,9 @@
 //! Managed runtime llama.cpp: portable-установка рядом с exe приложения.
 //!
-//! Скачивает официальные бинарники с GitHub Releases (ggml-org/llama.cpp),
-//! распаковывает в `{exe_dir}/runtime/{tag}/{backend}/`, пишет `llama_dir`.
+//! Скачивает **закреплённый** релиз llama.cpp (не «latest»), проверяет SHA-256,
+//! распаковывает в staging, smoke-check, затем атомарно подменяет рабочую папку.
+//!
+//! Путь: `{app_dir}/runtime/{tag}/{backend}/`
 //!
 //! Выбор backend (Windows x64):
 //!   NVIDIA → CUDA 12.4 (+ cudart DLLs)
@@ -12,11 +14,14 @@
 
 use crate::hardware::detect_hardware;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs::File;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 use tokio::fs::File as TokioFile;
 use tokio::io::AsyncWriteExt;
@@ -26,6 +31,31 @@ const GH_API: &str = "https://api.github.com/repos/ggml-org/llama.cpp";
 const UA: &str = concat!("LlamaLauncher/", env!("CARGO_PKG_VERSION"));
 const EMIT_STEP: u64 = 2_000_000;
 const SERVER_EXE: &str = "llama-server.exe";
+
+/// Закреплённый тег llama.cpp. Обновлять вместе с `PINNED_DIGESTS`.
+/// Не используем /releases/latest — смена CLI/имён архивов не должна ломать лаунчер внезапно.
+pub const PINNED_TAG: &str = "b9963";
+
+/// Доверенные SHA-256 (hex) zip-ассетов pinned-релиза (Windows x64).
+/// Источник: GitHub Releases digests на момент фиксации; сверяем после скачивания.
+const PINNED_DIGESTS: &[(&str, &str)] = &[
+    (
+        "llama-b9963-bin-win-cpu-x64.zip",
+        "267e1fc1a043cb9cfbd5dbc452b6bb1f00331108f848b0a3c6fbe0dade52d928",
+    ),
+    (
+        "llama-b9963-bin-win-vulkan-x64.zip",
+        "6951dc63f9fb5227ce987c15d6651589eddf1df2671ff57cdc66c582fd63b019",
+    ),
+    (
+        "llama-b9963-bin-win-cuda-12.4-x64.zip",
+        "d6a67339715ffa95820be6a0452c9151fb77fb635f86add9ba6cf05777df72d6",
+    ),
+    (
+        "cudart-llama-bin-win-cuda-12.4-x64.zip",
+        "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
+    ),
+];
 
 // ── Типы ─────────────────────────────────────────────────────────────────────
 
@@ -253,27 +283,93 @@ fn client() -> Result<reqwest::Client, String> {
         .user_agent(UA)
         // GitHub иногда долго отдаёт редиректы на objects.githubusercontent.com.
         .redirect(reqwest::redirect::Policy::limited(10))
+        .connect_timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(600)) // крупные zip (CUDA ~250+ МБ)
         .build()
         .map_err(|e| format!("Не удалось создать HTTP-клиент: {e}"))
 }
 
-async fn fetch_latest_release() -> Result<GhRelease, String> {
-    let url = format!("{GH_API}/releases/latest");
+/// Скачать метаданные **закреплённого** релиза (не latest).
+async fn fetch_pinned_release() -> Result<GhRelease, String> {
+    let url = format!("{GH_API}/releases/tags/{PINNED_TAG}");
     let resp = client()?
         .get(&url)
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
         .map_err(|e| format!("Не удалось связаться с GitHub: {e}"))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err(format!(
+            "Закреплённый релиз llama.cpp «{PINNED_TAG}» не найден на GitHub. Обновите LlamaLauncher."
+        ));
+    }
     if !resp.status().is_success() {
         return Err(format!(
-            "GitHub вернул {} при запросе релизов llama.cpp",
+            "GitHub вернул {} при запросе релиза {PINNED_TAG}",
             resp.status()
         ));
     }
-    resp.json::<GhRelease>()
+    let release: GhRelease = resp
+        .json()
         .await
-        .map_err(|e| format!("Не удалось разобрать ответ GitHub: {e}"))
+        .map_err(|e| format!("Не удалось разобрать ответ GitHub: {e}"))?;
+    if release.tag_name != PINNED_TAG {
+        return Err(format!(
+            "Ожидался тег {PINNED_TAG}, GitHub вернул «{}».",
+            release.tag_name
+        ));
+    }
+    Ok(release)
+}
+
+fn pinned_digest_for(asset_name: &str) -> Option<&'static str> {
+    PINNED_DIGESTS
+        .iter()
+        .find(|(n, _)| *n == asset_name)
+        .map(|(_, d)| *d)
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+/// SHA-256 файла → lowercase hex.
+fn file_sha256_hex(path: &Path) -> Result<String, String> {
+    let mut file = File::open(path)
+        .map_err(|e| format!("Не удалось открыть «{}» для проверки: {e}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("Ошибка чтения при проверке SHA-256: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(bytes_to_hex(&hasher.finalize()))
+}
+
+/// Сверить zip с доверенным digest (pinned table). Без совпадения — удаляем файл.
+fn verify_zip_digest(path: &Path, asset_name: &str) -> Result<(), String> {
+    let expected = pinned_digest_for(asset_name).ok_or_else(|| {
+        format!(
+            "Нет доверенного SHA-256 для «{asset_name}». Обновите LlamaLauncher (pinned digests)."
+        )
+    })?;
+    let got = file_sha256_hex(path)?;
+    if !got.eq_ignore_ascii_case(expected) {
+        let _ = std::fs::remove_file(path);
+        return Err(format!(
+            "Проверка целостности «{asset_name}» не пройдена (SHA-256 не совпал). Файл удалён — попробуйте снова."
+        ));
+    }
+    Ok(())
 }
 
 /// Имена asset'ов для backend (основной zip + опциональный cudart).
@@ -398,12 +494,12 @@ async fn stream_to_file(
 
 // ── Распаковка ───────────────────────────────────────────────────────────────
 
-/// Распаковать zip в dest, схлопывая путь до каталога, где лежит llama-server.exe
-/// (или просто все файлы, если exe нет — как у cudart).
+/// Распаковать zip **только** в `dest` (обычно staging). Не трогает рабочую установку.
+/// `merge=false` — очищает dest перед записью; `merge=true` — дополняет (cudart).
 fn extract_zip(zip_path: &Path, dest: &Path, merge: bool) -> Result<(), String> {
     if !merge && dest.exists() {
         std::fs::remove_dir_all(dest)
-            .map_err(|e| format!("Не удалось очистить «{}»: {e}", dest.display()))?;
+            .map_err(|e| format!("Не удалось очистить staging «{}»: {e}", dest.display()))?;
     }
     ensure_dir(dest)?;
 
@@ -411,48 +507,158 @@ fn extract_zip(zip_path: &Path, dest: &Path, merge: bool) -> Result<(), String> 
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| format!("Повреждённый zip-архив: {e}"))?;
 
-    // Сначала во временную папку рядом.
-    let tmp = dest.with_extension("extracting");
+    // Внутренний tmp рядом со staging (не рядом с live dest).
+    let tmp = dest.parent().unwrap_or(dest).join(format!(
+        ".extracting-{}",
+        dest.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("rt")
+    ));
     if tmp.exists() {
         let _ = std::fs::remove_dir_all(&tmp);
     }
     ensure_dir(&tmp)?;
 
-    for i in 0..archive.len() {
-        let mut entry = archive
-            .by_index(i)
-            .map_err(|e| format!("Ошибка чтения zip: {e}"))?;
-        let name = entry
-            .enclosed_name()
-            .ok_or_else(|| "Небезопасный путь внутри zip".to_string())?
-            .to_path_buf();
+    let extract_result = (|| -> Result<PathBuf, String> {
+        for i in 0..archive.len() {
+            let mut entry = archive
+                .by_index(i)
+                .map_err(|e| format!("Ошибка чтения zip: {e}"))?;
+            let name = entry
+                .enclosed_name()
+                .ok_or_else(|| "Небезопасный путь внутри zip".to_string())?
+                .to_path_buf();
 
-        let out_path = tmp.join(&name);
-        if entry.is_dir() {
-            ensure_dir(&out_path)?;
-            continue;
+            let out_path = tmp.join(&name);
+            if entry.is_dir() {
+                ensure_dir(&out_path)?;
+                continue;
+            }
+            if let Some(parent) = out_path.parent() {
+                ensure_dir(parent)?;
+            }
+            let mut outfile =
+                File::create(&out_path).map_err(|e| format!("Не удалось создать файл: {e}"))?;
+            io::copy(&mut entry, &mut outfile).map_err(|e| format!("Ошибка распаковки: {e}"))?;
         }
-        if let Some(parent) = out_path.parent() {
-            ensure_dir(parent)?;
+
+        // Если есть llama-server.exe — берём его каталог; иначе всё содержимое tmp (cudart).
+        let source = if let Some(exe) = find_server_exe(&tmp) {
+            exe.parent()
+                .ok_or_else(|| "Некорректный путь к llama-server.exe".to_string())?
+                .to_path_buf()
+        } else {
+            flatten_single_subdir(&tmp)
+        };
+        Ok(source)
+    })();
+
+    match extract_result {
+        Ok(source) => {
+            let copy_res = copy_dir_contents(&source, dest);
+            let _ = std::fs::remove_dir_all(&tmp);
+            copy_res
         }
-        let mut outfile =
-            File::create(&out_path).map_err(|e| format!("Не удалось создать файл: {e}"))?;
-        io::copy(&mut entry, &mut outfile).map_err(|e| format!("Ошибка распаковки: {e}"))?;
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&tmp);
+            if !merge {
+                let _ = std::fs::remove_dir_all(dest);
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Атомарная (насколько позволяет FS) подмена live ← staging.
+/// Старая live уходит в `*.bak`, при ошибке rename — восстанавливается.
+fn swap_staging_into_live(staging: &Path, live: &Path) -> Result<(), String> {
+    if !staging.is_dir() {
+        return Err(format!(
+            "Staging-папка не найдена: {}",
+            staging.display()
+        ));
+    }
+    let parent = live
+        .parent()
+        .ok_or_else(|| "Некорректный путь установки runtime".to_string())?;
+    ensure_dir(parent)?;
+
+    let bak_name = format!(
+        "{}.bak",
+        live.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("backend")
+    );
+    let bak = parent.join(bak_name);
+    if bak.exists() {
+        let _ = std::fs::remove_dir_all(&bak);
     }
 
-    // Если есть llama-server.exe — копируем его каталог; иначе всё содержимое tmp.
-    let source = if let Some(exe) = find_server_exe(&tmp) {
-        exe.parent()
-            .ok_or_else(|| "Некорректный путь к llama-server.exe".to_string())?
-            .to_path_buf()
-    } else {
-        // cudart: файлы могут быть в корне или в одной вложенной папке.
-        flatten_single_subdir(&tmp)
-    };
+    if live.exists() {
+        std::fs::rename(live, &bak).map_err(|e| {
+            format!(
+                "Не удалось сдвинуть старую установку в сторону: {e}. Закройте llama-server, если он запущен."
+            )
+        })?;
+    }
 
-    copy_dir_contents(&source, dest)?;
-    let _ = std::fs::remove_dir_all(&tmp);
-    Ok(())
+    match std::fs::rename(staging, live) {
+        Ok(()) => {
+            let _ = std::fs::remove_dir_all(&bak);
+            Ok(())
+        }
+        Err(e) => {
+            // Откат: вернуть старую live, если была.
+            if bak.exists() {
+                let _ = std::fs::rename(&bak, live);
+            }
+            Err(format!(
+                "Не удалось активировать новую установку: {e}. Прежняя (если была) восстановлена."
+            ))
+        }
+    }
+}
+
+/// Быстрая проверка, что бинарник запускается (не «пустой»/битый PE).
+fn smoke_test_server(dir: &Path) -> Result<(), String> {
+    let exe = dir.join(SERVER_EXE);
+    if !exe.is_file() {
+        return Err("llama-server.exe отсутствует в staging.".into());
+    }
+    let meta = std::fs::metadata(&exe)
+        .map_err(|e| format!("Не удалось прочитать llama-server.exe: {e}"))?;
+    if meta.len() < 100_000 {
+        return Err("llama-server.exe подозрительно мал — архив повреждён?".into());
+    }
+
+    let mut cmd = Command::new(&exe);
+    cmd.arg("--version")
+        .current_dir(dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    match cmd.output() {
+        Ok(out) => {
+            // --version у разных сборок может вернуть 0 или ненулевой код — главное, что процесс стартовал.
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if stdout.trim().is_empty() && stderr.trim().is_empty() && !out.status.success() {
+                return Err(
+                    "llama-server.exe не отвечает на --version. Установка отклонена.".into(),
+                );
+            }
+            Ok(())
+        }
+        Err(e) => Err(format!(
+            "Не удалось запустить llama-server.exe для проверки: {e}"
+        )),
+    }
 }
 
 fn flatten_single_subdir(root: &Path) -> PathBuf {
@@ -621,7 +827,7 @@ async fn install_impl(
     emit(
         app,
         "Готовлю установку",
-        backend.label_ru(),
+        &format!("{} · {}", PINNED_TAG, backend.label_ru()),
         0,
         0,
         false,
@@ -637,7 +843,7 @@ async fn install_impl(
         .join(".cache");
     ensure_dir(&cache).map_err(DlErr::Failed)?;
 
-    let release = fetch_latest_release().await.map_err(DlErr::Failed)?;
+    let release = fetch_pinned_release().await.map_err(DlErr::Failed)?;
     let tag = release.tag_name.clone();
     let (main_name, cudart_name) = asset_names(&tag, &backend);
     let main_asset = find_asset(&release, &main_name).map_err(DlErr::Failed)?;
@@ -646,10 +852,10 @@ async fn install_impl(
         None => None,
     };
 
-    // Оценка места: zip'ы * 2 (распаковка) + запас.
+    // Оценка места: zip'ы * 2 (распаковка + staging) + запас.
     let need = main_asset.size
         + cudart_asset.map(|a| a.size).unwrap_or(0);
-    let need = need.saturating_mul(3); // zip + extract + margin
+    let need = need.saturating_mul(3);
     if let Some(free) = free_space_bytes(&runtime_root().map_err(DlErr::Failed)?) {
         if free < need {
             return Err(DlErr::Failed(format!(
@@ -660,9 +866,19 @@ async fn install_impl(
         }
     }
 
-    let dest = backend_dir(&tag, &backend).map_err(DlErr::Failed)?;
+    // live = рабочая папка; staging = соседняя, live не трогаем до успешной проверки.
+    let live = backend_dir(&tag, &backend).map_err(DlErr::Failed)?;
+    let staging = live.with_file_name(format!(
+        "{}.staging",
+        live.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("backend")
+    ));
+    if staging.exists() {
+        let _ = std::fs::remove_dir_all(&staging);
+    }
 
-    // Скачать основной zip.
+    // Скачать основной zip + SHA-256.
     let main_zip = cache.join(&main_name);
     stream_to_file(
         app,
@@ -673,19 +889,43 @@ async fn install_impl(
         &main_name,
     )
     .await?;
+    emit(app, "Проверяю целостность…", &main_name, 0, 0, false, None, false);
+    let main_zip_c = main_zip.clone();
+    let main_name_c = main_name.clone();
+    tokio::task::spawn_blocking(move || verify_zip_digest(&main_zip_c, &main_name_c))
+        .await
+        .map_err(|e| DlErr::Failed(format!("Ошибка проверки SHA-256: {e}")))?
+        .map_err(DlErr::Failed)?;
 
-    // Скачать cudart при необходимости.
+    // Скачать cudart + SHA-256.
     let cudart_zip = if let Some(asset) = cudart_asset {
         let p = cache.join(&asset.name);
+        let asset_name = asset.name.clone();
         stream_to_file(
             app,
             state,
             &asset.browser_download_url,
             &p,
             "Скачиваю CUDA Runtime…",
-            &asset.name,
+            &asset_name,
         )
         .await?;
+        emit(
+            app,
+            "Проверяю целостность…",
+            &asset_name,
+            0,
+            0,
+            false,
+            None,
+            false,
+        );
+        let p_c = p.clone();
+        let n_c = asset_name.clone();
+        tokio::task::spawn_blocking(move || verify_zip_digest(&p_c, &n_c))
+            .await
+            .map_err(|e| DlErr::Failed(format!("Ошибка проверки SHA-256: {e}")))?
+            .map_err(DlErr::Failed)?;
         Some(p)
     } else {
         None
@@ -706,10 +946,10 @@ async fn install_impl(
         false,
     );
 
-    // extract_zip синхронный и CPU-bound — в blocking-пул.
-    let dest_c = dest.clone();
+    // Распаковка только в staging — live (старая установка) цела.
+    let staging_c = staging.clone();
     let main_zip_c = main_zip.clone();
-    tokio::task::spawn_blocking(move || extract_zip(&main_zip_c, &dest_c, false))
+    tokio::task::spawn_blocking(move || extract_zip(&main_zip_c, &staging_c, false))
         .await
         .map_err(|e| DlErr::Failed(format!("Ошибка задачи распаковки: {e}")))?
         .map_err(DlErr::Failed)?;
@@ -725,25 +965,48 @@ async fn install_impl(
             None,
             false,
         );
-        let dest_c = dest.clone();
-        tokio::task::spawn_blocking(move || extract_zip(&cz, &dest_c, true))
+        let staging_c = staging.clone();
+        tokio::task::spawn_blocking(move || extract_zip(&cz, &staging_c, true))
             .await
             .map_err(|e| DlErr::Failed(format!("Ошибка задачи распаковки: {e}")))?
             .map_err(DlErr::Failed)?;
     }
 
-    if !is_installed_at(&dest) {
+    if !is_installed_at(&staging) {
+        let _ = std::fs::remove_dir_all(&staging);
         return Err(DlErr::Failed(
-            "После распаковки llama-server.exe не найден. Архив релиза изменился?".into(),
+            "После распаковки llama-server.exe не найден. Архив релиза изменился? Обновите LlamaLauncher.".into(),
         ));
     }
 
-    write_meta(&dest, &tag, &backend).map_err(DlErr::Failed)?;
+    write_meta(&staging, &tag, &backend).map_err(DlErr::Failed)?;
 
-    // Чистим zip-кэш (можно оставить — но экономим место).
+    emit(app, "Проверяю запуск…", SERVER_EXE, 0, 0, false, None, false);
+    let staging_c = staging.clone();
+    tokio::task::spawn_blocking(move || smoke_test_server(&staging_c))
+        .await
+        .map_err(|e| DlErr::Failed(format!("Ошибка smoke-теста: {e}")))?
+        .map_err(|e| {
+            let _ = std::fs::remove_dir_all(&staging);
+            DlErr::Failed(e)
+        })?;
+
+    emit(app, "Активирую установку…", "", 0, 0, false, None, false);
+    let staging_c = staging.clone();
+    let live_c = live.clone();
+    tokio::task::spawn_blocking(move || swap_staging_into_live(&staging_c, &live_c))
+        .await
+        .map_err(|e| DlErr::Failed(format!("Ошибка активации: {e}")))?
+        .map_err(DlErr::Failed)?;
+
+    // Чистим zip-кэш.
     let _ = std::fs::remove_file(&main_zip);
     if let Some(n) = cudart_name {
         let _ = std::fs::remove_file(cache.join(n));
+    }
+    // На всякий случай убрать брошенный staging.
+    if staging.exists() {
+        let _ = std::fs::remove_dir_all(&staging);
     }
 
     emit(
@@ -877,4 +1140,85 @@ pub fn ensure_default_models_dir() -> Result<String, String> {
     let dir = default_models_dir()?;
     ensure_dir(&dir)?;
     Ok(dir.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn pinned_digests_cover_all_backends() {
+        let tag = PINNED_TAG;
+        for backend in [
+            RuntimeBackend::Cpu,
+            RuntimeBackend::Vulkan,
+            RuntimeBackend::Cuda12,
+        ] {
+            let (main, cudart) = asset_names(tag, &backend);
+            assert!(
+                pinned_digest_for(&main).is_some(),
+                "missing digest for {main}"
+            );
+            if let Some(c) = cudart {
+                assert!(
+                    pinned_digest_for(&c).is_some(),
+                    "missing digest for {c}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn verify_zip_digest_rejects_mismatch() {
+        let dir = std::env::temp_dir().join(format!(
+            "ll-sha-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("llama-b9963-bin-win-cpu-x64.zip");
+        let mut f = File::create(&path).unwrap();
+        f.write_all(b"not-a-real-zip").unwrap();
+        drop(f);
+        let err = verify_zip_digest(&path, "llama-b9963-bin-win-cpu-x64.zip");
+        assert!(err.is_err());
+        // Файл с неверным hash должен быть удалён.
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn swap_staging_preserves_old_on_empty_staging_fail() {
+        // swap requires staging to be a dir — empty path fails clearly.
+        let base = std::env::temp_dir().join(format!("ll-swap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let live = base.join("cpu");
+        let staging = base.join("cpu.staging");
+        std::fs::create_dir_all(&live).unwrap();
+        std::fs::write(live.join("marker.txt"), b"old").unwrap();
+        // staging missing → error, live intact
+        assert!(swap_staging_into_live(&staging, &live).is_err());
+        assert!(live.join("marker.txt").is_file());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn swap_staging_replaces_live() {
+        let base = std::env::temp_dir().join(format!("ll-swap2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let live = base.join("cpu");
+        let staging = base.join("cpu.staging");
+        std::fs::create_dir_all(&live).unwrap();
+        std::fs::write(live.join("marker.txt"), b"old").unwrap();
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::write(staging.join("marker.txt"), b"new").unwrap();
+        swap_staging_into_live(&staging, &live).unwrap();
+        let content = std::fs::read_to_string(live.join("marker.txt")).unwrap();
+        assert_eq!(content, "new");
+        assert!(!staging.exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
