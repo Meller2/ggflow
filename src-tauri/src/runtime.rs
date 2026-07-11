@@ -367,6 +367,7 @@ async fn verify_asset(path: PathBuf, asset_name: String, expected: String) -> Re
 
 // ── Прогресс / скачивание ────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn emit(
     app: &AppHandle,
     stage: &str,
