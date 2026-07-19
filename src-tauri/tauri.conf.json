@@ -3,6 +3,14 @@
   "productName": "llama-launcher",
   "version": "0.3.4",
   "identifier": "com.ilzat.llama-launcher",
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZGMzBEOEM3NUJGNUM0NzMKUldSenhQVmJ4OWd3YitHdWRzL2lLYWlONGsrOGRtcEhyeXVJaDBPdVYwNHZxK1pVU2VNOVlHRTEK",
+      "endpoints": [
+        "https://github.com/Meller2/llama-launcher/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",

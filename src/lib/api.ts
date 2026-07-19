@@ -2,6 +2,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { check as checkForUpdate } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 
 // ── Типы (зеркало config.rs / models.rs) ─────────────────────────────────────
 
@@ -133,6 +135,27 @@ export const loadSettings = (): Promise<Settings> => invoke("load_settings");
 
 export const saveSettings = (settings: Settings): Promise<void> =>
   invoke("save_settings", { settings });
+
+export interface AppUpdateInfo {
+  version: string;
+  body: string | null;
+}
+
+/** Проверить наличие подписанного обновления приложения. */
+export async function checkAppUpdate(): Promise<AppUpdateInfo | null> {
+  const update = await checkForUpdate();
+  return update
+    ? { version: update.version, body: update.body ?? null }
+    : null;
+}
+
+/** Скачать и установить обновление, затем перезапустить приложение. */
+export async function installAppUpdate(): Promise<void> {
+  const update = await checkForUpdate();
+  if (!update) return;
+  await update.downloadAndInstall();
+  await relaunch();
+}
 
 export const validateLlamaDir = (dir: string): Promise<boolean> =>
   invoke("validate_llama_dir", { dir });

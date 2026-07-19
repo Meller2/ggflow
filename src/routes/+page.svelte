@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { loadSettings, needsSetup, type Settings } from "$lib/api";
+  import { loadSettings, needsSetup, checkAppUpdate, installAppUpdate, type Settings } from "$lib/api";
   import { serverState } from "$lib/server.svelte";
   import { prefs } from "$lib/prefs.svelte";
   import Onboarding from "$lib/components/Onboarding.svelte";
@@ -22,6 +22,10 @@
       settings = await loadSettings();
       prefs.apply(settings);
       await serverState.init();
+      // Проверяем обновление после загрузки интерфейса, чтобы запуск не зависел
+      // от сети. Если обновление найдено, оно скачивается и устанавливается
+      // автоматически; при любой ошибке текущая версия продолжает работать.
+      void autoUpdate();
     } catch (e) {
       bootError = String(e);
       settings = null;
@@ -30,6 +34,15 @@
     }
   }
   init();
+
+  async function autoUpdate() {
+    try {
+      if (await checkAppUpdate()) await installAppUpdate();
+    } catch {
+      // Обновления необязательны: отсутствие сети или старый релиз не мешают
+      // запуску уже установленной версии.
+    }
+  }
 
   function onOnboarded(s: Settings) {
     settings = s;

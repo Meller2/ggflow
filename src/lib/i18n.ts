@@ -257,6 +257,13 @@ const ru: Dict = {
   "set.diag.copied": "Скопировано",
   "set.diag.open_dir": "Открыть папку данных",
   "set.diag.refresh": "Обновить",
+  "set.update": "Обновления приложения",
+  "set.update.hint": "Проверяйте новую версию и устанавливайте её без переустановки программы.",
+  "set.update.check": "Проверить обновления",
+  "set.update.checking": "Проверяю…",
+  "set.update.available": "Доступна версия {version}",
+  "set.update.install": "Установить",
+  "set.update.installing": "Устанавливаю…",
 };
 
 const en: Dict = {
@@ -500,6 +507,13 @@ const en: Dict = {
   "set.diag.copied": "Copied",
   "set.diag.open_dir": "Open data folder",
   "set.diag.refresh": "Refresh",
+  "set.update": "App updates",
+  "set.update.hint": "Check for a new version and install it without reinstalling the app.",
+  "set.update.check": "Check for updates",
+  "set.update.checking": "Checking…",
+  "set.update.available": "Version {version} is available",
+  "set.update.install": "Install",
+  "set.update.installing": "Installing…",
 };
 
 const TABLES: Record<Locale, Dict> = { ru, en };

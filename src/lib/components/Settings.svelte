@@ -11,6 +11,9 @@
     getDiagnosticReport,
     formatDiagnosticReport,
     revealInFolder,
+    checkAppUpdate,
+    installAppUpdate,
+    type AppUpdateInfo,
     type Settings,
     type RuntimeStatus,
     type RuntimeProgress,
@@ -27,6 +30,10 @@
   let draft = $state<Settings>(structuredClone($state.snapshot(settings)));
   let llamaValid = $state<boolean | null>(null);
   let saved = $state(false);
+  let appUpdate = $state<AppUpdateInfo | null>(null);
+  let updateChecking = $state(false);
+  let updateInstalling = $state(false);
+  let updateError = $state<string | null>(null);
 
   let rt = $state<RuntimeStatus | null>(null);
   let installing = $state(false);
@@ -133,6 +140,29 @@
 
   async function openDataDir() {
     if (diag?.app_dir) await revealInFolder(diag.app_dir);
+  }
+
+  async function checkUpdate() {
+    updateChecking = true;
+    updateError = null;
+    try {
+      appUpdate = await checkAppUpdate();
+    } catch (e) {
+      updateError = String(e);
+    } finally {
+      updateChecking = false;
+    }
+  }
+
+  async function installUpdate() {
+    updateInstalling = true;
+    updateError = null;
+    try {
+      await installAppUpdate();
+    } catch (e) {
+      updateError = String(e);
+      updateInstalling = false;
+    }
   }
 
   async function save() {
@@ -315,6 +345,24 @@
     </div>
   {/if}
 
+  <div class="glass block">
+    <span class="lbl">{prefs.t("set.update")}</span>
+    <p class="hint muted">{prefs.t("set.update.hint")}</p>
+    {#if appUpdate}
+      <div class="update-found">
+        <span>{prefs.t("set.update.available", { version: appUpdate.version })}</span>
+        <button class="btn btn-primary" onclick={installUpdate} disabled={updateInstalling}>
+          {updateInstalling ? prefs.t("set.update.installing") : prefs.t("set.update.install")}
+        </button>
+      </div>
+    {:else}
+      <button class="btn" onclick={checkUpdate} disabled={updateChecking}>
+        {updateChecking ? prefs.t("set.update.checking") : prefs.t("set.update.check")}
+      </button>
+    {/if}
+    {#if updateError}<div class="bad hint selectable">{updateError}</div>{/if}
+  </div>
+
   {#if prefs.showAdvanced}
     <div class="glass block">
       <span class="lbl">{prefs.t("set.launch")}</span>
@@ -383,6 +431,7 @@
   .row { display: flex; gap: 10px; }
   .row .input { flex: 1; }
   .hint { font-size: 12.5px; margin: 0; }
+  .update-found { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .ok { color: var(--ok); } .bad { color: var(--danger); } .muted { color: var(--text-2); }
 
   .seg { display: flex; flex-wrap: wrap; gap: 6px; }
