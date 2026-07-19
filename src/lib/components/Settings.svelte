@@ -7,6 +7,7 @@
     runtimeStatus,
     runtimeInstall,
     runtimeCancelInstall,
+    runtimeCheckUpdate,
     formatBytes,
     getDiagnosticReport,
     formatDiagnosticReport,
@@ -39,6 +40,8 @@
   let installing = $state(false);
   let progress = $state<RuntimeProgress | null>(null);
   let installError = $state<string | null>(null);
+  let runtimeUpdate = $state<{ current_tag: string | null; latest_tag: string; available: boolean } | null>(null);
+  let runtimeChecking = $state(false);
 
   let unlisten: UnlistenFn | null = null;
   $effect(() => {
@@ -118,6 +121,17 @@
 
   async function cancelInstall() {
     await runtimeCancelInstall();
+  }
+
+  async function checkRuntimeUpdate() {
+    runtimeChecking = true;
+    try {
+      runtimeUpdate = await runtimeCheckUpdate();
+    } catch (e) {
+      installError = String(e);
+    } finally {
+      runtimeChecking = false;
+    }
   }
 
   let diag = $state<DiagnosticReport | null>(null);
@@ -268,6 +282,23 @@
       <button class="btn btn-primary" onclick={installEngine} disabled={installing}>
         {installing ? prefs.t("set.engine.installing") : `↓ ${prefs.t("set.engine.install")}`}
       </button>
+    {/if}
+
+    {#if rt?.installed || draft.runtime_managed}
+      <div class="update-row">
+        <span class="hint muted">
+          {#if runtimeUpdate?.available}
+            {prefs.t("set.engine.update_available", { version: runtimeUpdate.latest_tag })}
+          {:else if runtimeUpdate}
+            {prefs.t("set.engine.up_to_date")}
+          {:else}
+            {prefs.t("set.engine.update_hint")}
+          {/if}
+        </span>
+        <button class="btn tiny" onclick={checkRuntimeUpdate} disabled={runtimeChecking}>
+          {runtimeChecking ? prefs.t("set.engine.checking") : prefs.t("set.engine.check_update")}
+        </button>
+      </div>
     {/if}
 
     {#if installing || (progress && !progress.done && !progress.canceled)}

@@ -228,6 +228,14 @@ export interface RuntimeStatus {
   app_dir: string;
   default_models_dir: string;
   runtime_root: string;
+  latest_tag: string | null;
+  update_available: boolean;
+}
+
+export interface RuntimeUpdate {
+  current_tag: string | null;
+  latest_tag: string;
+  available: boolean;
 }
 
 /** Событие `runtime-progress` при установке движка. */
@@ -243,6 +251,9 @@ export interface RuntimeProgress {
 
 export const runtimeStatus = (): Promise<RuntimeStatus> =>
   invoke("runtime_status");
+
+export const runtimeCheckUpdate = (): Promise<RuntimeUpdate> =>
+  invoke("runtime_check_update");
 
 /** backend: null/"auto" | "cpu" | "vulkan" | "cuda-12.4" */
 export const runtimeInstall = (backend?: string | null): Promise<RuntimeStatus> =>

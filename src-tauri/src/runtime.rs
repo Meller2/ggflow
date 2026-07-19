@@ -112,6 +112,15 @@ pub struct RuntimeStatus {
     pub default_models_dir: String,
     /// Корень runtime `{app_dir}/runtime`.
     pub runtime_root: String,
+    pub latest_tag: Option<String>,
+    pub update_available: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RuntimeUpdate {
+    pub current_tag: Option<String>,
+    pub latest_tag: String,
+    pub available: bool,
 }
 
 /// Событие `runtime-progress`.
@@ -283,6 +292,7 @@ struct GhAsset {
     name: String,
     browser_download_url: String,
     size: u64,
+    digest: Option<String>,
 }
 
 fn client() -> Result<reqwest::Client, String> {
@@ -327,6 +337,20 @@ async fn fetch_pinned_release() -> Result<GhRelease, String> {
         ));
     }
     Ok(release)
+}
+
+#[tauri::command]
+pub fn runtime_check_update() -> Result<RuntimeUpdate, String> {
+    let current = find_existing_install().map(|(_, tag, _)| tag);
+    // Обновляем только на заранее проверенную версию, для которой в приложении
+    // есть SHA-256 всех архивов. Это защищает от внезапного несовместимого
+    // релиза llama.cpp и не требует переустановки самого приложения.
+    let latest = PINNED_TAG.to_string();
+    Ok(RuntimeUpdate {
+        available: current.as_deref() != Some(latest.as_str()),
+        current_tag: current,
+        latest_tag: latest,
+    })
 }
 
 fn pinned_digest_for(asset_name: &str) -> Option<&'static str> {
@@ -841,6 +865,8 @@ fn build_status() -> Result<RuntimeStatus, String> {
         app_dir: app.to_string_lossy().to_string(),
         default_models_dir: models.to_string_lossy().to_string(),
         runtime_root: rt.to_string_lossy().to_string(),
+        latest_tag: None,
+        update_available: false,
     })
 }
 

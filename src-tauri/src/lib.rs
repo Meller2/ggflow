@@ -48,6 +48,7 @@ pub fn run() {
             hf::hf_download,
             hf::hf_cancel_download,
             runtime::runtime_status,
+            runtime::runtime_check_update,
             runtime::runtime_install,
             runtime::runtime_cancel_install,
             runtime::ensure_default_models_dir,
