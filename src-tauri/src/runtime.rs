@@ -292,7 +292,6 @@ struct GhAsset {
     name: String,
     browser_download_url: String,
     size: u64,
-    digest: Option<String>,
 }
 
 fn client() -> Result<reqwest::Client, String> {
