@@ -4,8 +4,8 @@ version = "0.4.0"
 description = "GGFlow — desktop launcher for llama.cpp (GGUF download, auto-config, one-click run)"
 authors = ["Meller2"]
 license = "MIT"
-repository = "https://github.com/Meller2/llama-launcher"
-homepage = "https://github.com/Meller2/llama-launcher"
+repository = "https://github.com/Meller2/ggflow"
+homepage = "https://github.com/Meller2/ggflow"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

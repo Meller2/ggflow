@@ -2,8 +2,8 @@
 
 **[English](#english)** · **[Русский](#русский)**
 
-[![CI](https://github.com/Meller2/llama-launcher/actions/workflows/ci.yml/badge.svg)](https://github.com/Meller2/llama-launcher/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/Meller2/llama-launcher?include_prereleases)](https://github.com/Meller2/llama-launcher/releases)
+[![CI](https://github.com/Meller2/ggflow/actions/workflows/ci.yml/badge.svg)](https://github.com/Meller2/ggflow/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Meller2/ggflow?include_prereleases)](https://github.com/Meller2/ggflow/releases)
 
 Desktop launcher for [llama.cpp](https://github.com/ggml-org/llama.cpp).  
 Formerly **llama-launcher**.
@@ -22,7 +22,7 @@ Built with [Tauri](https://tauri.app/), [SvelteKit](https://svelte.dev/) and Typ
 
 ### Download
 
-Pre-release builds: **[Releases](https://github.com/Meller2/llama-launcher/releases)**
+Pre-release builds: **[Releases](https://github.com/Meller2/ggflow/releases)**
 
 | Asset | Use when |
 |-------|----------|
@@ -99,7 +99,7 @@ Rust only (`src-tauri/`): `cargo build`, `cargo clippy`, `cargo test`.
 
 ### Скачать
 
-Pre-release: **[Releases](https://github.com/Meller2/llama-launcher/releases)**
+Pre-release: **[Releases](https://github.com/Meller2/ggflow/releases)**
 
 | Файл | Когда |
 |------|--------|

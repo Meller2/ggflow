@@ -30,5 +30,5 @@ Formerly **llama-launcher**.
 ### Changelog
 
 ```
-https://github.com/Meller2/llama-launcher/compare/vPREV...v{{VERSION_NUM}}
+https://github.com/Meller2/ggflow/compare/vPREV...v{{VERSION_NUM}}
 ```
