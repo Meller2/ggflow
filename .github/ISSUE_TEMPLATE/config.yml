@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Discussions / questions
+    url: https://github.com/Meller2/ggflow/discussions
+    about: Not a bug? Ask or share ideas here (if Discussions are enabled).
+  - name: llama.cpp upstream
+    url: https://github.com/ggml-org/llama.cpp/issues
+    about: Engine/binary bugs that are not GGFlow-specific.

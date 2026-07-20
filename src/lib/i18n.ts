@@ -72,6 +72,7 @@ const ru: Dict = {
   "onb.eng.need": "Сначала установите движок",
   "onb.eng.preparing": "Готовлю…",
   "onb.eng.cancel": "Отмена",
+  "onb.eng.fallback": "{note}",
 
   // Step: models
   "onb.mod.title": "Папка для моделей",
@@ -217,6 +218,15 @@ const ru: Dict = {
   "run.port": "Порт",
   "run.endpoint": "Адрес",
   "run.lines": "{n} строк",
+  "run.err.generic": "Сервер неожиданно завершился (код {code}). Смотрите лог.",
+  "run.err.cuda":
+    "Сервер упал с ошибкой CUDA (код {code}). Обновите драйвер NVIDIA или в Настройках переустановите движок — приложение попробует Vulkan/CPU.",
+  "run.err.oom":
+    "Не хватило памяти (код {code}). Возьмите модель меньшего размера / с большим квантованием или уменьшите контекст.",
+  "run.err.model":
+    "Не удалось загрузить модель (код {code}). Файл повреждён, несовместим или путь неверный. Смотрите лог.",
+  "run.err.port":
+    "Порт занят (код {code}). Остановите другой llama-server или смените порт в настройках.",
 
   // Settings
   "set.title": "Настройки",
@@ -239,6 +249,7 @@ const ru: Dict = {
   "set.engine.installing": "Устанавливаю…",
   "set.engine.manual": "Указать папку вручную",
   "set.engine.rec": "Рекомендуем: {label}",
+  "set.engine.fallback": "{note}",
   "set.folders": "Папки с моделями",
   "set.folders.add": "Добавить папку",
   "set.launch": "Параметры запуска по умолчанию",
@@ -352,6 +363,7 @@ const en: Dict = {
   "onb.eng.need": "Install the engine first",
   "onb.eng.preparing": "Preparing…",
   "onb.eng.cancel": "Cancel",
+  "onb.eng.fallback": "{note}",
 
   "onb.mod.title": "Models folder",
   "onb.mod.sub": "Downloaded neural nets (.gguf) will be stored here",
@@ -492,6 +504,15 @@ const en: Dict = {
   "run.port": "Port",
   "run.endpoint": "Address",
   "run.lines": "{n} lines",
+  "run.err.generic": "Server exited unexpectedly (code {code}). Check the log.",
+  "run.err.cuda":
+    "Server crashed with a CUDA error (code {code}). Update your NVIDIA driver, or reinstall the engine in Settings — the app will try Vulkan/CPU.",
+  "run.err.oom":
+    "Out of memory (code {code}). Use a smaller model / higher quant, or lower context size.",
+  "run.err.model":
+    "Failed to load the model (code {code}). File may be corrupt, incompatible, or the path is wrong. Check the log.",
+  "run.err.port":
+    "Port is in use (code {code}). Stop another llama-server or change the port in Settings.",
 
   "set.title": "Settings",
   "set.prefs": "Interface",
@@ -513,6 +534,7 @@ const en: Dict = {
   "set.engine.installing": "Installing…",
   "set.engine.manual": "Choose folder manually",
   "set.engine.rec": "Recommended: {label}",
+  "set.engine.fallback": "{note}",
   "set.folders": "Model folders",
   "set.folders.add": "Add folder",
   "set.launch": "Default launch parameters",

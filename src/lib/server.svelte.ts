@@ -11,6 +11,32 @@ import { prefs } from "$lib/prefs.svelte";
 
 const MAX_LINES = 2000;
 
+/** Разобрать типичные причины падения llama-server по хвосту лога. */
+function classifyServerFailure(code: number, log: string[]): string {
+  const tail = log.slice(-60).join("\n").toLowerCase();
+  if (
+    /cuda.*(error|fail|not found|unavailable|no device|driver)|cublas|cudnn|nvml|ggml_cuda/.test(
+      tail,
+    )
+  ) {
+    return prefs.t("run.err.cuda", { code: String(code) });
+  }
+  if (
+    /out of memory|insufficient memory|failed to allocate|oom|ggml_gallocr|not enough memory/.test(
+      tail,
+    )
+  ) {
+    return prefs.t("run.err.oom", { code: String(code) });
+  }
+  if (/failed to open|cannot open|invalid model|error loading model|unsupported/.test(tail)) {
+    return prefs.t("run.err.model", { code: String(code) });
+  }
+  if (/address already in use|failed to bind|eaddrinuse|port/.test(tail)) {
+    return prefs.t("run.err.port", { code: String(code) });
+  }
+  return prefs.t("run.err.generic", { code: String(code) });
+}
+
 class ServerStore {
   running = $state(false);
   ready = $state(false);
@@ -70,7 +96,7 @@ class ServerStore {
         // Ручной стоп через taskkill даёт ненулевой код — это норма, не ошибка.
         // Ошибку показываем только при самопадении (краш, не загрузилась модель).
         if (!wasManualStop && e.payload !== 0) {
-          this.error = `Сервер неожиданно завершился (код ${e.payload}). Смотрите лог.`;
+          this.error = classifyServerFailure(e.payload, this.log);
         }
       }),
     );

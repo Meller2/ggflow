@@ -66,6 +66,7 @@
   let installedPath = $state<string | null>(settings.llama_dir);
   let installedTag = $state<string | null>(settings.runtime_tag);
   let installedBackend = $state<string | null>(settings.runtime_backend);
+  let installNote = $state<string | null>(null);
   let installedLabel = $state<string | null>(null);
   let saving = $state(false);
   let saveError = $state<string | null>(null);
@@ -161,6 +162,7 @@
     if (installing) return;
     installing = true;
     installError = null;
+    installNote = null;
     progress = null;
     try {
       const st = await runtimeInstall(null);
@@ -169,6 +171,7 @@
       installedTag = st.tag;
       installedBackend = st.backend;
       installedLabel = st.backend_label;
+      installNote = st.note ?? null;
       if (st.llama_dir) {
         llamaDir = st.llama_dir;
         llamaValid = true;
@@ -366,6 +369,9 @@
               </button>
             {/if}
           </div>
+          {#if installNote}
+            <p class="hint muted warn-note">{prefs.t("onb.eng.fallback", { note: installNote })}</p>
+          {/if}
           {#if expertise === "expert"}
             <p class="path-hint" title={installedPath}>{installedPath}</p>
           {/if}
@@ -623,6 +629,7 @@
     font-family: var(--font-mono); font-size: 12px; color: var(--text-1);
     letter-spacing: -.02em;
   }
+  .warn-note { color: var(--warn); margin: 6px 0 0; line-height: 1.4; }
   .path-hint {
     margin: 0; font-size: 11px; color: var(--text-2);
     font-family: var(--font-mono); letter-spacing: -.02em;

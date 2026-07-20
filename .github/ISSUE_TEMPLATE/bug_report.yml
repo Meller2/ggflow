@@ -1,0 +1,48 @@
+name: Bug report
+description: Something in GGFlow itself is broken (UI, settings, download, updater).
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. For **engine/CUDA install** problems prefer the *Runtime installation* template.
+  - type: input
+    id: version
+    attributes:
+      label: GGFlow version
+      placeholder: "0.4.0"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Expected vs actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+  - type: textarea
+    id: diag
+    attributes:
+      label: Diagnostic report (optional)
+      description: Settings → Diagnostics → Copy report. Redact paths if needed.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log / screenshot notes

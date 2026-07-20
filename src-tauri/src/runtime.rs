@@ -114,6 +114,13 @@ pub struct RuntimeStatus {
     pub runtime_root: String,
     pub latest_tag: Option<String>,
     pub update_available: bool,
+    /// При авто-установке: id backend'а, с которого ушли (CUDA→Vulkan и т.п.).
+    /// `None`, если откат не применялся или статус читается с диска.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fell_back_from: Option<String>,
+    /// Короткая поясняющая заметка для UI (успешный откат и т.п.).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -883,6 +890,8 @@ fn build_status() -> Result<RuntimeStatus, String> {
         runtime_root: rt.to_string_lossy().to_string(),
         latest_tag: None,
         update_available: false,
+        fell_back_from: None,
+        note: None,
     })
 }
 
@@ -902,6 +911,19 @@ fn fallback_chain(recommended: RuntimeBackend) -> Vec<RuntimeBackend> {
     }
 }
 
+/// Укоротить техническую ошибку для progress/note (1 строка, без простыни).
+fn short_err(msg: &str) -> String {
+    let line = msg.lines().next().unwrap_or(msg).trim();
+    const MAX: usize = 160;
+    if line.chars().count() <= MAX {
+        line.to_string()
+    } else {
+        let mut s: String = line.chars().take(MAX).collect();
+        s.push('…');
+        s
+    }
+}
+
 /// Установка с авто-откатом backend'а. Откат применяется, только если backend
 /// не был явно выбран пользователем (`backend_override == None`) — явный выбор
 /// (напр. CUDA в Settings) молча не подменяем, только сообщаем об ошибке.
@@ -911,17 +933,28 @@ async fn install_with_fallback(
     backend_override: Option<RuntimeBackend>,
 ) -> Result<RuntimeStatus, DlErr> {
     let Some(explicit) = backend_override else {
-        let chain = fallback_chain(recommend_backend());
+        let recommended = recommend_backend();
+        let chain = fallback_chain(recommended.clone());
         let mut last_err: Option<String> = None;
+        let mut tried: Vec<&'static str> = Vec::new();
         for (i, backend) in chain.iter().enumerate() {
             if state.cancel.load(Ordering::SeqCst) {
                 return Err(DlErr::Canceled);
             }
+            tried.push(backend.label_ru());
             if i > 0 {
+                let why = last_err
+                    .as_deref()
+                    .map(short_err)
+                    .unwrap_or_else(|| "ошибка".into());
                 emit(
                     app,
-                    "Пробую другой backend…",
-                    backend.label_ru(),
+                    &format!(
+                        "{} не подошёл — пробую {}…",
+                        chain[i - 1].label_ru(),
+                        backend.label_ru()
+                    ),
+                    &why,
                     0,
                     0,
                     false,
@@ -930,14 +963,41 @@ async fn install_with_fallback(
                 );
             }
             match install_impl(app, state, Some(backend.clone())).await {
-                Ok(st) => return Ok(st),
+                Ok(mut st) => {
+                    if i > 0 {
+                        let why = last_err
+                            .as_deref()
+                            .map(short_err)
+                            .unwrap_or_else(|| "ошибка установки".into());
+                        st.fell_back_from = Some(recommended.id().to_string());
+                        st.note = Some(format!(
+                            "{} не удалось установить ({why}). Работаем на {}.",
+                            recommended.label_ru(),
+                            backend.label_ru()
+                        ));
+                        emit(
+                            app,
+                            "Установлен запасной backend",
+                            backend.label_ru(),
+                            0,
+                            0,
+                            false,
+                            None,
+                            false,
+                        );
+                    }
+                    return Ok(st);
+                }
                 Err(DlErr::Canceled) => return Err(DlErr::Canceled),
                 Err(DlErr::Failed(msg)) => last_err = Some(msg),
             }
         }
-        return Err(DlErr::Failed(
-            last_err.unwrap_or_else(|| "Не удалось установить движок.".into()),
-        ));
+        let detail = last_err.unwrap_or_else(|| "неизвестная ошибка".into());
+        return Err(DlErr::Failed(format!(
+            "Не удалось установить движок (пробовали: {}). Последняя ошибка: {}",
+            tried.join(" → "),
+            detail
+        )));
     };
     install_impl(app, state, Some(explicit)).await
 }
@@ -1285,6 +1345,44 @@ pub fn ensure_default_models_dir() -> Result<String, String> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn fallback_chain_cuda_then_vulkan_then_cpu() {
+        assert_eq!(
+            fallback_chain(RuntimeBackend::Cuda12),
+            vec![
+                RuntimeBackend::Cuda12,
+                RuntimeBackend::Vulkan,
+                RuntimeBackend::Cpu,
+            ]
+        );
+    }
+
+    #[test]
+    fn fallback_chain_vulkan_then_cpu() {
+        assert_eq!(
+            fallback_chain(RuntimeBackend::Vulkan),
+            vec![RuntimeBackend::Vulkan, RuntimeBackend::Cpu]
+        );
+    }
+
+    #[test]
+    fn fallback_chain_cpu_only() {
+        assert_eq!(
+            fallback_chain(RuntimeBackend::Cpu),
+            vec![RuntimeBackend::Cpu]
+        );
+    }
+
+    #[test]
+    fn short_err_keeps_first_line_and_truncates() {
+        let multi = "первая строка\nвторая";
+        assert_eq!(short_err(multi), "первая строка");
+        let long = "x".repeat(200);
+        let s = short_err(&long);
+        assert!(s.ends_with('…'));
+        assert!(s.chars().count() <= 161);
+    }
 
     #[test]
     fn pinned_digests_cover_all_backends() {

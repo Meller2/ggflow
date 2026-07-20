@@ -230,6 +230,10 @@ export interface RuntimeStatus {
   runtime_root: string;
   latest_tag: string | null;
   update_available: boolean;
+  /** Auto-install only: backend id we fell back from (e.g. cuda-12.4). */
+  fell_back_from?: string | null;
+  /** Human note when install used a fallback backend. */
+  note?: string | null;
 }
 
 export interface RuntimeUpdate {

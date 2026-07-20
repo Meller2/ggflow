@@ -1,0 +1,68 @@
+name: Runtime installation problem
+description: llama.cpp engine install, CUDA/Vulkan/CPU backend, smoke test, missing DLLs.
+title: "[runtime] "
+labels: ["runtime"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Include as much as you can. GGFlow Settings → **Diagnostics → Copy report** is the fastest path.
+  - type: input
+    id: version
+    attributes:
+      label: GGFlow version
+      placeholder: "0.4.0"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11"
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU + driver
+      placeholder: "RTX 3060 · driver 560.xx"
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend attempted
+      options:
+        - Auto (recommended)
+        - CUDA 12.4
+        - Vulkan
+        - CPU
+        - Unknown
+    validations:
+      required: true
+  - type: input
+    id: runtime_tag
+    attributes:
+      label: Runtime tag (if shown)
+      placeholder: "b9963"
+  - type: textarea
+    id: error
+    attributes:
+      label: Full error text
+      description: Progress stage + final error from Onboarding/Settings.
+    validations:
+      required: true
+  - type: textarea
+    id: diag
+    attributes:
+      label: Diagnostic report
+      description: Paste the copied diagnostic report if possible.
+    validations:
+      required: false
+  - type: checkboxes
+    id: tried
+    attributes:
+      label: Already tried
+      options:
+        - label: Reinstall engine (auto)
+        - label: Updated GPU drivers
+        - label: Enough free disk space (>5 GB)
+        - label: Not running from a read-only / network folder

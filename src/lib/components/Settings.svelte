@@ -50,6 +50,7 @@
   let installing = $state(false);
   let progress = $state<RuntimeProgress | null>(null);
   let installError = $state<string | null>(null);
+  let installNote = $state<string | null>(null);
   let runtimeUpdate = $state<{ current_tag: string | null; latest_tag: string; available: boolean } | null>(null);
   let runtimeChecking = $state(false);
 
@@ -105,10 +106,12 @@
     if (installing) return;
     installing = true;
     installError = null;
+    installNote = null;
     progress = null;
     try {
       const st = await runtimeInstall(null);
       rt = st;
+      installNote = st.note ?? null;
       if (st.llama_dir) {
         draft.llama_dir = st.llama_dir;
         draft.runtime_managed = true;
@@ -320,6 +323,9 @@
           {/if}
           {#if draft.runtime_managed || rt?.installed}
             <p class="hint muted">{prefs.t("set.engine.managed")}</p>
+          {/if}
+          {#if installNote}
+            <p class="hint muted warn-note">{prefs.t("set.engine.fallback", { note: installNote })}</p>
           {/if}
         </div>
         <button class="btn" onclick={installEngine} disabled={installing}>
@@ -567,6 +573,7 @@
   .row { display: flex; gap: 10px; }
   .row .input { flex: 1; }
   .hint { font-size: 12.5px; margin: 0; }
+  .warn-note { color: var(--warn); margin-top: 6px; line-height: 1.4; }
   .update-found { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .ok { color: var(--ok); } .bad { color: var(--danger); } .muted { color: var(--text-2); }
 

@@ -1,0 +1,34 @@
+name: Model compatibility problem
+description: GGUF fails to load, OOM, wrong quant, catalog download issues.
+title: "[model] "
+labels: ["models"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: GGFlow version
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model / file name
+      placeholder: "Something-Q4_K_M.gguf"
+    validations:
+      required: true
+  - type: input
+    id: size
+    attributes:
+      label: Approximate file size + VRAM/RAM
+      placeholder: "4.5 GB · 8 GB VRAM · 32 GB RAM"
+  - type: textarea
+    id: what
+    attributes:
+      label: What went wrong
+      description: Download failed, load crash, nonsense output, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Server log excerpt
