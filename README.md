@@ -1,30 +1,57 @@
 # llama-launcher
 
-A desktop launcher for [llama.cpp](https://github.com/ggml-org/llama.cpp) — browse and download models from Hugging Face, auto-configure launch parameters for your hardware, and run `llama-server` with a single click.
+**English** | [Русский](README.ru.md)
 
-Built with [Tauri](https://tauri.app/), [SvelteKit](https://svelte.dev/) and TypeScript.
+A desktop launcher for [llama.cpp](https://github.com/ggml-org/llama.cpp) — download models from Hugging Face, auto-install the engine for your GPU, tune launch flags for your hardware, and run `llama-server` with one click.
+
+Built with [Tauri](https://tauri.app/), [SvelteKit](https://svelte.dev/) and TypeScript. **Windows-first** (x64).
+
+[![CI](https://github.com/Meller2/llama-launcher/actions/workflows/ci.yml/badge.svg)](https://github.com/Meller2/llama-launcher/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Meller2/llama-launcher?include_prereleases)](https://github.com/Meller2/llama-launcher/releases)
+
+## Download
+
+Pre-release builds: **[Releases](https://github.com/Meller2/llama-launcher/releases)**
+
+| Asset | Use when |
+|-------|----------|
+| `llama-launcher_*_x64-setup.exe` | Normal install (**recommended**) |
+| `llama-launcher-v*-portable.exe` / `.zip` | No installer — drop into a folder and run |
+
+> `*.sig` and `latest.json` are for **in-app auto-update**. You do not need them manually.
 
 ## Features
 
-- **Auto-install runtime** — downloads official `llama.cpp` builds (CUDA / Vulkan / CPU) next to the app (portable).
-- **Model catalog** — browse and download GGUF models straight from Hugging Face.
-- **Local models** — manage the models already on disk.
-- **Auto-config** — detects your hardware (GPU/CPU/RAM) and picks sensible launch parameters.
-- **One-click run** — start/stop the llama.cpp server and watch its status live.
-- **Onboarding & settings** — first-run setup and configurable paths.
+- **Managed runtime** — downloads official llama.cpp builds (CUDA / Vulkan / CPU), pinned + checksummed
+- **True portable mode** — if the app folder is writable, **settings, engine, and models** all live next to the exe (USB-friendly)
+- **Model catalog** — curated recommendations + Hugging Face search / resumable GGUF downloads
+- **Local models** — scan folders, reveal in Explorer, one-click launch
+- **Auto-config** — VRAM / RAM / CPU aware launch parameters
+- **Server lifecycle** — start / stop / logs / ready status; optional open chat UI when ready
+- **Onboarding** — language (RU/EN), expertise level, first-run engine install
+- **Data reset** — Settings → remove runtime / default models / cache / settings without uninstalling the app
+- **Signed app updates** — check and install from inside the app
 
-### Portable layout
+## Portable layout
 
-When the folder next to the executable is writable (portable / USB / dev),
-**everything** lives there — settings, engine, models. Copy the folder and go.
-
-If that folder is not writable (e.g. Program Files install), data goes to
-`%LOCALAPPDATA%\com.llamalauncher.app\`:
+When the folder next to the executable is writable (portable / USB / dev):
 
 ```
-settings.json                                # UI prefs, onboarding, paths
-runtime/<tag>/<backend>/llama-server.exe     # managed engine
-models/                                      # default GGUF folder
+llama-launcher.exe
+settings.json
+runtime/<tag>/<backend>/llama-server.exe
+models/
+```
+
+Copy the whole folder to another PC — prefs come with you.
+
+If that folder is not writable (e.g. Program Files), data goes to:
+
+```
+%LOCALAPPDATA%\com.llamalauncher.app\
+  settings.json
+  runtime\...
+  models\
 ```
 
 ## Development
@@ -33,15 +60,13 @@ Prerequisites: [Node.js](https://nodejs.org/), [Rust](https://www.rust-lang.org/
 
 ```bash
 npm install
-npm run tauri dev
+npm run tauri dev      # full app (Tauri + Vite on :1420)
+npm run check          # svelte-check
+npm run tauri build    # NSIS + updater artifacts (when signing keys present)
 ```
 
-## Build
+Rust only (`src-tauri/`): `cargo build`, `cargo clippy`, `cargo test`.
 
-```bash
-npm run tauri build
-```
+## License
 
-## Recommended IDE Setup
-
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer).
+[MIT](LICENSE)
