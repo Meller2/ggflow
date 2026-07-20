@@ -185,8 +185,7 @@ fn dir_is_writable(dir: &Path) -> bool {
 /// Имя папки данных — совпадает с `tauri.conf.json` → `identifier`.
 pub const DATA_DIR_NAME: &str = "com.ggflow.app";
 /// Прежние identifier: ищем runtime/settings, но больше не пишем сюда.
-pub const LEGACY_DATA_DIR_NAMES: &[&str] =
-    &["com.llamalauncher.app", "com.ilzat.llama-launcher"];
+pub const LEGACY_DATA_DIR_NAMES: &[&str] = &["com.llamalauncher.app", "com.ilzat.llama-launcher"];
 
 /// `%LOCALAPPDATA%/<name>` — fallback, когда рядом с exe писать нельзя (Program Files).
 fn local_data_dir(name: &str) -> Result<PathBuf, String> {
@@ -399,9 +398,7 @@ fn file_sha256_hex(path: &Path) -> Result<String, String> {
 /// Сверить zip с доверенным digest (pinned table). Без совпадения — удаляем файл.
 fn verify_zip_digest(path: &Path, asset_name: &str) -> Result<(), String> {
     let expected = pinned_digest_for(asset_name).ok_or_else(|| {
-        format!(
-            "Нет доверенного SHA-256 для «{asset_name}». Обновите GGFlow (pinned digests)."
-        )
+        format!("Нет доверенного SHA-256 для «{asset_name}». Обновите GGFlow (pinned digests).")
     })?;
     let got = file_sha256_hex(path)?;
     if !got.eq_ignore_ascii_case(expected) {
@@ -1109,7 +1106,8 @@ async fn install_impl(
     if !is_installed_at(&staging) {
         let _ = std::fs::remove_dir_all(&staging);
         return Err(DlErr::Failed(
-            "После распаковки llama-server.exe не найден. Архив релиза изменился? Обновите GGFlow.".into(),
+            "После распаковки llama-server.exe не найден. Архив релиза изменился? Обновите GGFlow."
+                .into(),
         ));
     }
 
