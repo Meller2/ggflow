@@ -8,7 +8,7 @@ Desktop launcher for [llama.cpp](https://github.com/ggml-org/llama.cpp). Product
 | npm / crate / exe | `ggflow` |
 | Tauri identifier / AppData | `com.ggflow.app` |
 | GitHub | https://github.com/Meller2/ggflow |
-| Current version | 0.4.0 (see `package.json` + `tauri.conf.json`) |
+| Current version | 0.5.0 (see `package.json` + `tauri.conf.json`) |
 
 **Stack:** Tauri v2 (Rust) + SvelteKit (Svelte 5, TypeScript).  
 **Windows-first.** DXGI + `GlobalMemoryStatusEx` for hardware; `taskkill` / `CREATE_NO_WINDOW` for process control. Code comments largely Russian; UI i18n `ru` / `en` + expertise (`beginner` / `intermediate` / `expert`).

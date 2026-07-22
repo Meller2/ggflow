@@ -1,6 +1,6 @@
 [package]
 name = "ggflow"
-version = "0.4.0"
+version = "0.5.0"
 description = "GGFlow — desktop launcher for llama.cpp (GGUF download, auto-config, one-click run)"
 authors = ["Meller2"]
 license = "MIT"
