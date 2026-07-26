@@ -102,7 +102,13 @@ Notes: `.github/release-notes.md` or `.github/releases/vX.Y.Z.md`. Draft pre-rel
 - Svelte 5 runes for new state; i18n via `prefs.t()`.
 - No drive-by refactors / large frontend test suite unless asked.
 - Do not commit secrets, GGUF binaries, `node_modules/`, `src-tauri/target/`.
-- Version bump: `package.json` + `Cargo.toml` + `Cargo.lock` package version + `tauri.conf.json`.
+- Local-only paths, already in `.gitignore` — never add them: `website/`
+  (marketing site, lives on the maintainer's machine), `goal.md` / `IDEA.md`
+  (product planning), `.grok/` + `/mcps/` (agent configs).
+- Version bump — **all five**: `package.json` + `package-lock.json` +
+  `Cargo.toml` + `Cargo.lock` package version + `tauri.conf.json`.
+- `.gitattributes` pins LF in the index; checkout stays native. Do not commit
+  CRLF-normalized files.
 
 ## Key paths
 
