@@ -1,39 +1,48 @@
+# ── OS / editor noise ────────────────────────────────────────────────────────
 .DS_Store
+Thumbs.db
+
+# ── Node / SvelteKit ─────────────────────────────────────────────────────────
 node_modules
 /build
 /.svelte-kit
 /package
-.env
-.env.*
-!.env.example
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
-# Rust / Tauri build artifacts
+# ── Secrets ──────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Rust / Tauri build artifacts ─────────────────────────────────────────────
 /src-tauri/target
 /src-tauri/gen/schemas
 
-# Scratch logo copies in repo root (the used ones live in static/)
-/logo.png
-/logo1.png
-
-# Portable runtime / models next to dev binary (auto-installed llama.cpp)
+# Portable runtime / models auto-installed next to the dev binary.
+# Covered by /src-tauri/target above; kept explicit as documentation.
 /src-tauri/target/debug/runtime
 /src-tauri/target/debug/models
 /src-tauri/target/release/runtime
 /src-tauri/target/release/models
 
-# Local MCP tool schemas (not part of the app)
+# ── Local-only, never pushed ─────────────────────────────────────────────────
+# Marketing site (Next.js) — lives on the maintainer's machine, not in this repo.
+/website/
+
+# Agent / MCP tool configs (not part of the app).
+/.grok/
 /mcps/
 
-
-# Local scratch (release notes prep, screenshots)
-.tmp-release/
-/photo*.jpg
-/photo*.png
-
-
-# Local product planning (not for GitHub)
+# Product planning notes.
 /goal.md
 /IDEA.md
 
+# Scratch: release prep, screenshots, stray logo copies
+# (the logos actually used by the app live in static/).
+.tmp-release/
+/logo.png
+/logo1.png
+/photo*.jpg
+/photo*.png
+/izobrazenie*.png
