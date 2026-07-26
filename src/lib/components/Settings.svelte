@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import {
     validateLlamaDir,
@@ -29,7 +30,11 @@
     onchange: (s: Settings) => void;
   } = $props();
 
-  let draft = $state<Settings>(structuredClone($state.snapshot(settings)));
+  // Черновик правок: отвязанная копия настроек, сохраняется только по кнопке.
+  // Снимок берём один раз — прилетевший позже проп не должен затирать ввод.
+  let draft = $state<Settings>(
+    untrack(() => structuredClone($state.snapshot(settings))),
+  );
   let llamaValid = $state<boolean | null>(null);
   let saved = $state(false);
   let appUpdate = $state<AppUpdateInfo | null>(null);

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import {
     validateLlamaDir,
@@ -21,6 +22,8 @@
     type Locale,
     type Expertise,
     expertiseLabel,
+    normalizeLocale,
+    normalizeExpertise,
   } from "$lib/i18n";
 
   let { settings, oncomplete }: {
@@ -33,15 +36,22 @@
   let step = $state<Step>("lang");
   const stepIndex = $derived(STEPS.indexOf(step));
 
-  let locale = $state<Locale>(
-    settings.locale === "en" ? "en" : "ru",
-  );
-  let expertise = $state<Expertise>(
-    settings.expertise === "intermediate" || settings.expertise === "expert"
-      ? settings.expertise
-      : "beginner",
-  );
-  let openUiOnReady = $state(settings.open_ui_on_ready !== false);
+  // Стартовые значения wizard'а читаем из настроек ровно один раз: дальше
+  // состоянием владеет сам wizard, и обновившийся проп не должен затирать
+  // выбор пользователя посреди прохождения шагов.
+  const seed = untrack(() => ({
+    locale: normalizeLocale(settings.locale),
+    expertise: normalizeExpertise(settings.expertise),
+    openUiOnReady: settings.open_ui_on_ready !== false,
+    llamaDir: settings.llama_dir ?? "",
+    runtimePath: settings.llama_dir,
+    runtimeTag: settings.runtime_tag,
+    runtimeBackend: settings.runtime_backend,
+  }));
+
+  let locale = $state<Locale>(seed.locale);
+  let expertise = $state<Expertise>(seed.expertise);
+  let openUiOnReady = $state(seed.openUiOnReady);
 
   // Сразу отражаем выбор в prefs — строки wizard'а обновляются на лету.
   $effect(() => {
@@ -55,7 +65,7 @@
   let rt = $state<RuntimeStatus | null>(null);
   let rtLoading = $state(true);
   let manual = $state(false);
-  let llamaDir = $state(settings.llama_dir ?? "");
+  let llamaDir = $state(seed.llamaDir);
   let llamaValid = $state<boolean | null>(null);
   let checking = $state(false);
   let modelFolders = $state<string[]>([]);
@@ -63,9 +73,9 @@
   let installing = $state(false);
   let progress = $state<RuntimeProgress | null>(null);
   let installError = $state<string | null>(null);
-  let installedPath = $state<string | null>(settings.llama_dir);
-  let installedTag = $state<string | null>(settings.runtime_tag);
-  let installedBackend = $state<string | null>(settings.runtime_backend);
+  let installedPath = $state<string | null>(seed.runtimePath);
+  let installedTag = $state<string | null>(seed.runtimeTag);
+  let installedBackend = $state<string | null>(seed.runtimeBackend);
   let installNote = $state<string | null>(null);
   let installedLabel = $state<string | null>(null);
   let saving = $state(false);

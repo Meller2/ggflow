@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import {
     hfSearch,
@@ -44,7 +45,9 @@
   let filesLoading = $state<string | null>(null);
   let filesError = $state<string | null>(null);
 
-  let destDir = $state<string>(settings.model_folders[0] ?? "");
+  // Папка по умолчанию — первая из настроек, но дальше ей владеет пользователь
+  // (select ниже), поэтому берём стартовое значение один раз.
+  let destDir = $state<string>(untrack(() => settings.model_folders[0] ?? ""));
 
   let dl = $state<DownloadProgress | null>(null);
   let dlDoneMsg = $state<string | null>(null);

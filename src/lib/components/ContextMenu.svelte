@@ -10,7 +10,7 @@
 </script>
 
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
 
   let {
     x,
@@ -27,7 +27,10 @@
   } = $props();
 
   let root: HTMLDivElement | undefined = $state();
-  let pos = $state({ left: x, top: y });
+  // Меню пересоздаётся на каждый вызов (`{#if ctx}` у родителя), поэтому x/y —
+  // константы экземпляра: берём их один раз, дальше позицией владеет onMount,
+  // который прижимает меню к границам окна.
+  let pos = $state(untrack(() => ({ left: x, top: y })));
 
   onMount(() => {
     const el = root;
@@ -66,6 +69,7 @@
   style:left="{pos.left}px"
   style:top="{pos.top}px"
   role="menu"
+  tabindex="-1"
   oncontextmenu={(e) => e.preventDefault()}
 >
   {#each items as item}
