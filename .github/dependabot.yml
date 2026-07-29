@@ -8,6 +8,21 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
+    groups:
+      npm-patch-minor:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+          - "minor"
+    ignore:
+      # Major bumps need a dedicated PR + full tauri/svelte smoke.
+      - dependency-name: "@sveltejs/vite-plugin-svelte"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "svelte"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: cargo
     directory: "/src-tauri"
@@ -17,6 +32,25 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
+    groups:
+      cargo-patch-minor:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+          - "minor"
+    ignore:
+      # Breaking TLS defaults / API surface — bump only with intentional PR.
+      - dependency-name: "reqwest"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "windows"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "sha2"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "tokio"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "zip"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: "/"
@@ -25,3 +59,11 @@ updates:
     open-pull-requests-limit: 3
     labels:
       - dependencies
+    groups:
+      actions:
+        patterns:
+          - "*"
+    ignore:
+      # Major action bumps can change artifact naming / node runtime.
+      - dependency-name: "tauri-apps/tauri-action"
+        update-types: ["version-update:semver-major"]
