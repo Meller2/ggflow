@@ -109,13 +109,17 @@ Notes: `.github/release-notes.md` or `.github/releases/vX.Y.Z.md`. Draft pre-rel
   `Cargo.toml` + `Cargo.lock` package version + `tauri.conf.json`.
 - `.gitattributes` pins LF in the index; checkout stays native. Do not commit
   CRLF-normalized files.
+- Prefer `.github/PULL_REQUEST_TEMPLATE.md` checklist on every PR.
+- Dependabot: patch/minor are grouped; **majors are ignored** in
+  `.github/dependabot.yml` (reqwest, windows, sha2, tokio, zip, tauri-action,
+  vite/svelte majors). Bump those only in a dedicated PR with full CI + smoke.
 
 ## Key paths
 
 ```
 src-tauri/src/lib.rs          # commands, close → shutdown
 src-tauri/src/server.rs       # process + events
-src-tauri/src/runtime.rs      # PINNED_TAG, DATA_DIR_NAME, install
+src-tauri/src/runtime.rs      # PINNED_TAG, DATA_DIR_NAME, install (split candidates: paths / download / install)
 src-tauri/src/config.rs       # Settings, portable path
 src-tauri/src/data_reset.rs   # wipe_app_data
 src/lib/api.ts                # IPC types
@@ -123,5 +127,7 @@ src/lib/server.svelte.ts      # frontend server state
 src/routes/+page.svelte       # shell
 src/lib/components/           # feature UI
 .github/workflows/            # ci.yml, release.yml
+.github/dependabot.yml        # grouped patch/minor; majors ignored
+.github/PULL_REQUEST_TEMPLATE.md
 README.md                     # EN + RU in-page anchors
 ```
